@@ -1,5 +1,5 @@
 from microbit import *
-import time
+import time, music
 
 
 class KeyStatus:
@@ -39,34 +39,45 @@ class KeyStatus:
 
     def is_key_a_pressed(self):
         v = self._key_a_pressed
-        self._key_a_pressed = False
+        if v:
+            self._key_a_pressed = False
         return v
 
     def is_key_b_pressed(self):
         v = self._key_b_pressed
-        self._key_b_pressed = False
+        if v:
+            self._key_b_pressed = False
         return v
 
     def is_key_ab_pressed(self):
         # 同时clear a和b的状态
         v = self._key_ab_pressed
-        self._key_ab_pressed = False
-        self._key_a_pressed = False
-        self._key_b_pressed = False
+        if v:
+            self._key_ab_pressed = False
+            self._key_a_pressed = False
+            self._key_b_pressed = False
         return v
 
     def is_logo_pressed(self):
         v = self._logo_pressed
-        self._logo_pressed = False
+        if v:
+            self._logo_pressed = False
         return v
 
 
 class Clock:
+    # all modes
+    ScreenOn = 1
+    AdjustHour = 2
+    AdjustMinute = 3
+    AdjustSecond = 4
+    ScreenOff = 5
 
     def __init__(self):
         self._chip_base_ts = time.ticks_ms()
         self._realworld_base_sec = 0
         self._bright = 5
+        self.cur_mode = Clock.ScreenOn
 
     def hour(self):
         return self.now() // 3600
@@ -125,6 +136,13 @@ class Clock:
             v = 59
         self.set_second(v)
 
+    def set_bright(self, v):
+        if v > 9:
+            v = 9
+        if v < 1:
+            v = 1
+        self._bright = v
+
     def inc_bright(self):
         v = self._bright + 1
         if v > 9:
@@ -151,98 +169,141 @@ class Clock:
 
     def show_hour(self, hour):
         v = hour
+        b = self._bright
+        if self.cur_mode == Clock.AdjustHour:
+            b = 9
+        elif self.cur_mode in [Clock.AdjustMinute, Clock.AdjustSecond]:
+            b = 1
         for y in range(5):
             pt = v % 2
             if pt != 0:
-                display.set_pixel(0, 4 - y, self._bright)
+                display.set_pixel(0, 4 - y, b)
             else:
                 display.set_pixel(0, 4 - y, 0)
             v = v // 2
 
     def show_minute(self, minute):
         v = minute
+        b = self._bright
+        if self.cur_mode == Clock.AdjustMinute:
+            b = 9
+        elif self.cur_mode in [Clock.AdjustHour, Clock.AdjustSecond]:
+            b = 1
         for x in range(1, 3):
             for y in range(5):
                 pt = v % 2
                 if pt != 0:
-                    display.set_pixel(3 - x, 4 - y, self._bright)
+                    display.set_pixel(3 - x, 4 - y, b)
                 else:
                     display.set_pixel(3 - x, 4 - y, 0)
                 v = v // 2
 
     def show_second(self, second):
         v = second
+        b = self._bright
+        if self.cur_mode == Clock.AdjustSecond:
+            b = 9
+        elif self.cur_mode in [Clock.AdjustHour, Clock.AdjustMinute]:
+            b = 1
         for x in range(3, 5):
             for y in range(5):
                 pt = v % 2
                 if pt != 0:
-                    display.set_pixel(7 - x, 4 - y, self._bright)
+                    display.set_pixel(7 - x, 4 - y, b)
                 else:
                     display.set_pixel(7 - x, 4 - y, 0)
                 v = v // 2
 
 
-# all modes
-ScreenOn = 1
-AdjustHour = 2
-AdjustMinute = 3
-AdjustSecond = 4
-ScreenOff = 5
-
-# init system
+# init_system
 pin_logo.set_touch_mode(pin_logo.CAPACITIVE)
 
 # variables
 clock = Clock()
 ks = KeyStatus()
-cur_mode = ScreenOn
 
 # init time for test
-clock.set_hour(23)
-clock.set_minute(29)
+clock.set_hour(10)
+clock.set_minute(34)
+clock.set_bright(15)
 
-while True:
-    # update key status
-    ks.update()
 
-    # process key events in each mode, switch mode if needed
-    if cur_mode == ScreenOn:
+def debug_1():
+    screen_on = True
+    while True:
+        ks.update()
+
         if ks.is_logo_pressed():
-            # switch on/off
-            cur_mode = ScreenOff
-            display.off()
-        elif ks.is_key_ab_pressed():
-            cur_mode = AdjustHour
-        elif ks.is_key_a_pressed():
+            screen_on = not screen_on
+            if screen_on:
+                display.on()
+            else:
+                display.off()
+        if ks.is_key_a_pressed():
             clock.dec_bright()
-        elif ks.is_key_b_pressed():
+            # clock.inc_hour()
+        if ks.is_key_b_pressed():
             clock.inc_bright()
-    elif cur_mode == AdjustHour:
+            # clock.inc_minute()
         if ks.is_key_ab_pressed():
-            cur_mode = AdjustMinute
-        elif ks.is_key_a_pressed():
-            clock.dec_hour()
-        elif ks.is_key_b_pressed():
-            clock.inc_hour()
-    elif cur_mode == AdjustMinute:
-        if ks.is_key_ab_pressed():
-            cur_mode = AdjustSecond
-        elif ks.is_key_a_pressed():
-            clock.dec_minute()
-        elif ks.is_key_b_pressed():
-            clock.inc_minute()
-    elif cur_mode == AdjustSecond:
-        if ks.is_key_ab_pressed():
-            cur_mode = ScreenOn  # back to normal
-        elif ks.is_key_a_pressed():
-            clock.dec_minute()
-        elif ks.is_key_b_pressed():
-            clock.inc_minute()
-    elif cur_mode == ScreenOff:
-        cur_mode = ScreenOn
-        display.on()
+            clock.inc_second()
+        clock.show()
+        sleep(100)
 
-    # output
-    clock.show()
 
-    sleep(100)
+def main():
+    while True:
+        # update key status
+        ks.update()
+
+        # process key events in each mode, switch mode if needed
+        if clock.cur_mode == Clock.ScreenOn:
+            if ks.is_logo_pressed():
+                # switch on/off
+                clock.cur_mode = Clock.ScreenOff
+                music.play(["E4:1", "D4:1", "C4:1", ])
+                display.off()
+            elif ks.is_key_ab_pressed():
+                clock.cur_mode = Clock.AdjustHour
+                music.play(["C3:1", ])
+            elif ks.is_key_a_pressed():
+                clock.dec_bright()
+            elif ks.is_key_b_pressed():
+                clock.inc_bright()
+        elif clock.cur_mode == Clock.AdjustHour:
+            if ks.is_key_ab_pressed():
+                clock.cur_mode = Clock.AdjustMinute
+                music.play(["C4:1", ])
+            elif ks.is_key_a_pressed():
+                clock.dec_hour()
+            elif ks.is_key_b_pressed():
+                clock.inc_hour()
+        elif clock.cur_mode == Clock.AdjustMinute:
+            if ks.is_key_ab_pressed():
+                clock.cur_mode = Clock.AdjustSecond
+                music.play(["C5:1", ])
+            elif ks.is_key_a_pressed():
+                clock.dec_minute()
+            elif ks.is_key_b_pressed():
+                clock.inc_minute()
+        elif clock.cur_mode == Clock.AdjustSecond:
+            if ks.is_key_ab_pressed():
+                clock.cur_mode = Clock.ScreenOn  # back to normal
+                music.play(["C4:1", "D4:1", "E4:1", ])
+            elif ks.is_key_a_pressed():
+                clock.dec_second()
+            elif ks.is_key_b_pressed():
+                clock.inc_second()
+        elif clock.cur_mode == Clock.ScreenOff:
+            if ks.is_logo_pressed():
+                clock.cur_mode = Clock.ScreenOn
+                music.play(["C4:1", "D4:1", "E4:1", ])
+                display.on()
+
+        # output
+        clock.show()
+
+        sleep(100)
+
+
+main()
