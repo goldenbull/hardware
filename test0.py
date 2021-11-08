@@ -30,6 +30,7 @@ class KeyStatus:
         if self._prev_ab_is_down:
             if not cur_key_a_is_down and not cur_key_b_is_down:
                 # 曾经同时按下，现在都抬起了
+                self._prev_ab_is_down = False
                 self._event_ab = True
             else:
                 # 还有一个键没松开，等着松开
