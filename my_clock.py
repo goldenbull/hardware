@@ -19,12 +19,12 @@ class Clock:
 
     def now(self) -> int:
         # get current datetime by delta ticks
-        chip_cur_ts = time.ticks_ms()
-        delta_seconds = (chip_cur_ts - self._chip_base_ts) / 1000
+        delta_seconds = (time.ticks_ms() - self._chip_base_ts) / 1000
         # 调整microbit本身的误差
         delta_seconds /= 0.98911
         cur_realworld_sec = self._realworld_base_sec + delta_seconds
-        return int(cur_realworld_sec)
+        # always truncate to 24 hours
+        return int(cur_realworld_sec) % (3600 * 24)
 
     def hour(self):
         return self.now() // 3600 % 24
