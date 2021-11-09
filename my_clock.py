@@ -17,8 +17,17 @@ class Clock:
         self._bright = 5
         self.cur_mode = Clock.ScreenOn
 
+    def now(self) -> int:
+        # get current datetime by delta ticks
+        chip_cur_ts = time.ticks_ms()
+        delta_seconds = (chip_cur_ts - self._chip_base_ts) / 1000
+        # 调整microbit本身的误差
+        delta_seconds /= 0.98911
+        cur_realworld_sec = self._realworld_base_sec + delta_seconds
+        return int(cur_realworld_sec)
+
     def hour(self):
-        return self.now() // 3600
+        return self.now() // 3600 % 24
 
     def minute(self):
         return self.now() // 60 % 60
@@ -35,7 +44,7 @@ class Clock:
         self._chip_base_ts = time.ticks_ms()
 
     def set_second(self, second):
-        self._realworld_base_sec = self.now() // 60 * 60 + second
+        self._realworld_base_sec = self.hour() * 3600 + self.minute() * 60 + second
         self._chip_base_ts = time.ticks_ms()
 
     def inc_hour(self):
@@ -92,15 +101,6 @@ class Clock:
         if v <= 0:
             v = 1
         self._bright = v
-
-    def now(self) -> int:
-        # get current datetime by delta ticks
-        chip_cur_ts = time.ticks_ms()
-        delta_seconds = (chip_cur_ts - self._chip_base_ts) / 1000
-        # 调整microbit本身的误差
-        delta_seconds /= 0.9891
-        cur_realworld_sec = self._realworld_base_sec + delta_seconds
-        return int(cur_realworld_sec)
 
     def show(self):
         self.show_hour(self.hour())
@@ -160,7 +160,7 @@ class Clock:
         ts0 = h0 * 3600 + m0 * 60 + s0
         ts1 = h1 * 3600 + m1 * 60 + s1
         if ts0 <= self.now() <= ts1:
-            music.play(["C6:1", "D6:1", "E6:1", ])
+            music.play(["C6:4", "D6:4", "E6:4", ])
 
 
 # init_system
@@ -172,9 +172,11 @@ clock = Clock()
 ks = KeyStatus()
 
 # init time for test
-clock.set_hour(10)
-clock.set_minute(34)
-clock.set_bright(15)
+clock.set_hour(21)
+clock.set_minute(1)
+clock.set_second(30)
+
+clock.set_bright(3)
 
 
 def debug_1():
@@ -253,7 +255,7 @@ def main():
         clock.show()
 
         # 闹钟
-        clock.alarm((7, 30, 0), (7, 30, 10))
+        clock.alarm((7, 30, 0), (7, 30, 5))
 
         sleep(100)
 
