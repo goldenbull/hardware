@@ -28,9 +28,32 @@
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "hardware/adc.h"
-#include "EPD_Test.h"
-#include "LCD_1in14.h"
+#include "lib_lcd.h"
 
+UWORD *Image; // global image for LCD
+
+void init_lcd()
+{
+    printf("init LCD_1in14\n");
+    DEV_Module_Init();
+    DEV_SET_PWM(50);
+    LCD_1IN14_Init(HORIZONTAL);
+    LCD_1IN14_Clear(WHITE);
+
+    UDOUBLE Imagesize = LCD_1IN14_HEIGHT * LCD_1IN14_WIDTH * 2;
+    if ((Image = (UWORD *)malloc(Imagesize)) == NULL)
+    {
+        printf("Failed to apply for black memory...\r\n");
+        exit(0);
+    }
+
+    // Create a new image cache named IMAGE_RGB and fill it with white
+    Paint_NewImage((UBYTE *)Image, LCD_1IN14.WIDTH, LCD_1IN14.HEIGHT, 0, WHITE);
+    Paint_SetScale(65);
+    Paint_Clear(WHITE);
+    Paint_SetRotate(ROTATE_0);
+    Paint_Clear(WHITE);
+}
 
 /* set address */
 bool reserved_addr(uint8_t addr)
@@ -38,15 +61,17 @@ bool reserved_addr(uint8_t addr)
     return (addr & 0x78) == 0 || (addr & 0x78) == 0x78;
 }
 
-void init_ADC() {
-    adc_gpio_init(26); //26
-    adc_gpio_init(29); //29
+void init_ADC()
+{
+    adc_gpio_init(26); // 26
+    adc_gpio_init(29); // 29
     adc_init();
     adc_set_round_robin(0);
     adc_set_temp_sensor_enabled(1);
 }
 
-double get_cpu_temp() {
+double get_cpu_temp()
+{
     adc_select_input(4); // 4
     uint16_t value = adc_read();
     double temp = 27.0 - (value * 3.3 / 4095 - 0.706f) / 0.001721;
@@ -64,6 +89,7 @@ int LCD_1in14_test(void)
         return -1;
     }
     DEV_SET_PWM(50);
+
     /* LCD Init */
     printf("1.14inch LCD demo...\r\n");
     LCD_1IN14_Init(HORIZONTAL);
@@ -71,15 +97,15 @@ int LCD_1in14_test(void)
 
     // LCD_SetBacklight(1023);
     UDOUBLE Imagesize = LCD_1IN14_HEIGHT * LCD_1IN14_WIDTH * 2;
-    UWORD* BlackImage;
-    if ((BlackImage = (UWORD*)malloc(Imagesize)) == NULL)
+    UWORD *Image;
+    if ((Image = (UWORD *)malloc(Imagesize)) == NULL)
     {
         printf("Failed to apply for black memory...\r\n");
         exit(0);
     }
 
     // /*1.Create a new image cache named IMAGE_RGB and fill it with white*/
-    Paint_NewImage((UBYTE*)BlackImage, LCD_1IN14.WIDTH, LCD_1IN14.HEIGHT, 0, WHITE);
+    Paint_NewImage((UBYTE *)Image, LCD_1IN14.WIDTH, LCD_1IN14.HEIGHT, 0, WHITE);
     Paint_SetScale(65);
     Paint_Clear(WHITE);
     Paint_SetRotate(ROTATE_0);
@@ -112,17 +138,34 @@ int LCD_1in14_test(void)
     Paint_DrawString_EN(1, 100, "Pico-LCD-1.14", &Font16, RED, WHITE);
 
     // /*3.Refresh the picture in RAM to LCD*/
-    LCD_1IN14_Display(BlackImage);
-    DEV_Delay_ms(3000);
+    LCD_1IN14_Display(Image);
+    DEV_Delay_ms(1000);
     DEV_SET_PWM(10);
 #endif
+
 #if 1
 
     Paint_DrawImage(gImage_1inch14_1, 0, 0, 240, 135);
-    LCD_1IN14_Display(BlackImage);
-    DEV_Delay_ms(3000);
-
+    LCD_1IN14_Display(Image);
+    DEV_Delay_ms(1000);
 #endif
+
+    // connect WIFI test
+    Paint_Clear(WHITE);
+    if (cyw43_arch_wifi_connect_timeout_ms("CU_fairyland", "3.1415926535897932", CYW43_AUTH_WPA2_AES_PSK, 30000))
+    {
+        Paint_DrawString_EN(20, 50, "WiFi error", &Font16, RED, WHITE);
+    }
+    else
+    {
+        Paint_DrawString_EN(20, 50, "WiFi OK", &Font16, GREEN, WHITE);
+    }
+
+    // run_ntp_test();
+    LCD_1IN14_Display(Image);
+    DEV_Delay_ms(1000);
+
+    // start LCD
     uint8_t keyA = 15;
     uint8_t keyB = 17;
 
@@ -149,107 +192,127 @@ int LCD_1in14_test(void)
     Paint_DrawRectangle(12, 60, 33, 80, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_EMPTY);
     Paint_DrawRectangle(62, 60, 83, 80, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_EMPTY);
     Paint_DrawRectangle(37, 60, 58, 80, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_EMPTY);
-    LCD_1IN14_Display(BlackImage);
+    LCD_1IN14_Display(Image);
 
     int counter = 0;
+    int cur_brightness = 100;
+    double cur_temperature = 20;
     while (1)
     {
+        if (counter % 10 == 0)
+        {
+            cur_temperature = get_cpu_temp();
+        }
+
         Paint_Clear(WHITE);
         if (DEV_Digital_Read(keyA) == 0)
         {
             Paint_DrawRectangle(208, 12, 228, 32, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(208, 12, 228, 32, BlackImage);
+            LCD_1IN14_DisplayWindows(208, 12, 228, 32, Image);
             printf("gpio =%d\r\n", keyA);
+
+            cur_brightness += 10;
+            if (cur_brightness > 100)
+                cur_brightness = 100;
+            DEV_SET_PWM(cur_brightness);
+            // sleep_ms(500);
         }
         else
         {
             Paint_DrawRectangle(208, 12, 228, 32, WHITE, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(208, 12, 228, 32, BlackImage);
+            LCD_1IN14_DisplayWindows(208, 12, 228, 32, Image);
         }
 
         if (DEV_Digital_Read(keyB) == 0)
         {
             Paint_DrawRectangle(208, 103, 228, 123, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(208, 103, 228, 123, BlackImage);
+            LCD_1IN14_DisplayWindows(208, 103, 228, 123, Image);
             printf("gpio =%d\r\n", keyB);
+
+            cur_brightness -= 10;
+            if (cur_brightness < 0)
+                cur_brightness = 0;
+            DEV_SET_PWM(cur_brightness);
+            // sleep_ms(500);
         }
         else
         {
             Paint_DrawRectangle(208, 103, 228, 123, WHITE, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(208, 103, 228, 123, BlackImage);
+            LCD_1IN14_DisplayWindows(208, 103, 228, 123, Image);
         }
 
         if (DEV_Digital_Read(up) == 0)
         {
             Paint_DrawRectangle(37, 35, 57, 55, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(37, 35, 57, 55, BlackImage);
+            LCD_1IN14_DisplayWindows(37, 35, 57, 55, Image);
             printf("gpio =%d\r\n", up);
         }
         else
         {
             Paint_DrawRectangle(37, 35, 57, 55, WHITE, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(37, 35, 57, 55, BlackImage);
+            LCD_1IN14_DisplayWindows(37, 35, 57, 55, Image);
         }
 
         if (DEV_Digital_Read(dowm) == 0)
         {
             Paint_DrawRectangle(37, 85, 57, 105, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(37, 85, 57, 105, BlackImage);
+            LCD_1IN14_DisplayWindows(37, 85, 57, 105, Image);
             printf("gpio =%d\r\n", dowm);
         }
         else
         {
             Paint_DrawRectangle(37, 85, 57, 105, WHITE, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(37, 85, 57, 105, BlackImage);
+            LCD_1IN14_DisplayWindows(37, 85, 57, 105, Image);
         }
 
         if (DEV_Digital_Read(left) == 0)
         {
             Paint_DrawRectangle(12, 60, 32, 80, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(12, 60, 32, 80, BlackImage);
+            LCD_1IN14_DisplayWindows(12, 60, 32, 80, Image);
             printf("gpio =%d\r\n", left);
         }
         else
         {
             Paint_DrawRectangle(12, 60, 32, 80, WHITE, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(12, 60, 32, 80, BlackImage);
+            LCD_1IN14_DisplayWindows(12, 60, 32, 80, Image);
         }
 
         if (DEV_Digital_Read(right) == 0)
         {
             Paint_DrawRectangle(62, 60, 82, 80, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(62, 60, 82, 80, BlackImage);
+            LCD_1IN14_DisplayWindows(62, 60, 82, 80, Image);
             printf("gpio =%d\r\n", right);
         }
         else
         {
             Paint_DrawRectangle(62, 60, 82, 80, WHITE, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(62, 60, 82, 80, BlackImage);
+            LCD_1IN14_DisplayWindows(62, 60, 82, 80, Image);
         }
 
         if (DEV_Digital_Read(ctrl) == 0)
         {
             Paint_DrawRectangle(37, 60, 57, 80, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(37, 60, 57, 80, BlackImage);
+            LCD_1IN14_DisplayWindows(37, 60, 57, 80, Image);
             printf("gpio =%d\r\n", ctrl);
         }
         else
         {
             Paint_DrawRectangle(37, 60, 57, 80, WHITE, DOT_PIXEL_2X2, DRAW_FILL_FULL);
-            LCD_1IN14_DisplayWindows(37, 60, 57, 80, BlackImage);
+            LCD_1IN14_DisplayWindows(37, 60, 57, 80, Image);
         }
 
         counter++;
         Paint_DrawNum(80, 20, counter, &Font20, 0, BLUE, YELLOW);
-        Paint_DrawNum(80, 80, get_cpu_temp(), &Font20, 2, RED, YELLOW);
-        LCD_1IN14_Display(BlackImage);
+        Paint_DrawNum(80, 50, cur_brightness, &Font20, 0, BLUE, YELLOW);
+        Paint_DrawNum(80, 80, cur_temperature, &Font20, 2, RED, YELLOW);
+        LCD_1IN14_Display(Image);
 
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, counter % 2);
+        // cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, counter % 2);
     }
 
     /* Module Exit */
-    free(BlackImage);
-    BlackImage = NULL;
+    free(Image);
+    Image = NULL;
 
     DEV_Module_Exit();
     return 0;
