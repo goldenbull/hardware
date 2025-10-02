@@ -26,12 +26,25 @@
 # THE SOFTWARE.
 #
 ******************************************************************************/
+#include "pico/stdlib.h"
+#include "pico/cyw43_arch.h"
 #include "EPD_Test.h"   //Examples
 
 int main(void)
 {
+    stdio_init_all();
+    if (cyw43_arch_init()) {
+        printf("Wi-Fi init failed");
+        return -1;
+    }
+    while (true) {
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+        sleep_ms(50);
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
+        sleep_ms(50);
+    }
 
-    LCD_1in14_test();
+    //LCD_1in14_test();
 
     return 0;
 }

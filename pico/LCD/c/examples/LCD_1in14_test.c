@@ -90,14 +90,14 @@ int LCD_1in14_test(void)
 
     // /*3.Refresh the picture in RAM to LCD*/
     LCD_1IN14_Display(BlackImage);
-    DEV_Delay_ms(2000);
+    DEV_Delay_ms(3000);
     DEV_SET_PWM(10);
 #endif
 #if 1
      
      Paint_DrawImage(gImage_1inch14_1,0,0,240,135);
      LCD_1IN14_Display(BlackImage);
-     DEV_Delay_ms(2000);
+     DEV_Delay_ms(3000);
      
 #endif
     uint8_t keyA = 15; 
