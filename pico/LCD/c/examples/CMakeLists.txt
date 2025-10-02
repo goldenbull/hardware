@@ -10,4 +10,9 @@ include_directories(../lib/Icm20948)
 
 # Generate the link library
 add_library(examples ${DIR_examples_SRCS})
-target_link_libraries(examples PUBLIC Config LCD Infrared Icm20948)
+target_link_libraries(examples PUBLIC Config LCD GUI Fonts Infrared Icm20948
+    pico_stdlib
+    hardware_clocks
+    hardware_spi
+    pico_cyw43_arch_none
+    )
