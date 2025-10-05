@@ -34,5 +34,6 @@
 # output
 build/
 
+.idea/
 .vscode/
 vs-proj/

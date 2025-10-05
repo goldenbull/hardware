@@ -30,15 +30,15 @@
 #include "hardware/adc.h"
 #include "lib_lcd.h"
 
-UWORD *Image; // global image for LCD
+UWORD *Image; // cached image for LCD
 
-void init_lcd()
+void init_lcd(PicoStatus *status)
 {
     printf("init LCD_1in14\n");
     DEV_Module_Init();
-    DEV_SET_PWM(50);
+    DEV_SET_PWM(status->cur_brightness);
     LCD_1IN14_Init(HORIZONTAL);
-    LCD_1IN14_Clear(WHITE);
+    LCD_1IN14_Clear(BLACK);
 
     UDOUBLE Imagesize = LCD_1IN14_HEIGHT * LCD_1IN14_WIDTH * 2;
     if ((Image = (UWORD *)malloc(Imagesize)) == NULL)
@@ -47,12 +47,11 @@ void init_lcd()
         exit(0);
     }
 
-    // Create a new image cache named IMAGE_RGB and fill it with white
+    // Create a new image cache named IMAGE_RGB and fill it
     Paint_NewImage((UBYTE *)Image, LCD_1IN14.WIDTH, LCD_1IN14.HEIGHT, 0, WHITE);
     Paint_SetScale(65);
-    Paint_Clear(WHITE);
     Paint_SetRotate(ROTATE_0);
-    Paint_Clear(WHITE);
+    Paint_Clear(BLACK);
 }
 
 /* set address */
@@ -316,4 +315,16 @@ int LCD_1in14_test(void)
 
     DEV_Module_Exit();
     return 0;
+}
+
+void lcd_log_info(int x, int y, char *msg)
+{
+    Paint_DrawString_EN(x, y, msg, &Font16, GREEN, BLACK);
+    LCD_1IN14_Display(Image);
+}
+
+void lcd_log_error(int x, int y, char *msg)
+{
+    Paint_DrawString_EN(x, y, msg, &Font16, RED, BLACK);
+    LCD_1IN14_Display(Image);
 }
