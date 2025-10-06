@@ -12,28 +12,27 @@
 #include "lwip/pbuf.h"
 #include "lwip/udp.h"
 
+#include "simple_clock.h"
 #include "lib_wifi.h"
+#include "lib_lcd.h"
 
 #define NTP_SERVER "192.168.88.201"
 #define NTP_MSG_LEN 48
 #define NTP_PORT 123
 #define NTP_DELTA 2208988800 // seconds between 1 Jan 1900 and 1 Jan 1970
-#define NTP_TEST_TIME_MS (5 * 1000)
+#define NTP_TEST_TIME_MS (3600 * 1000)
 #define NTP_RESEND_TIME_MS (10 * 1000)
 
 NTP_T *ntp_state = NULL;
 
 // Called with results of operation
-static void ntp_result(NTP_T *state, int status, time_t *result)
+static void ntp_result(NTP_T *state, int status, time_t *timestamp)
 {
-    if (status == 0 && result)
+    if (status == 0 && timestamp)
     {
-        struct tm *utc = gmtime(result);
-        sprintf(state->timestr,
-                "%04d-%02d-%02d %02d:%02d:%02d",
-                utc->tm_year + 1900, utc->tm_mday, utc->tm_mon + 1,
-                utc->tm_hour + 8, utc->tm_min, utc->tm_sec); // timezone hardcoded to +8
-        state->ntp_synchronized = true;
+        pico_status.base_ntp_ts = *timestamp;
+        pico_status.base_abs_time = get_absolute_time();
+        pico_status.ntp_time_fetched = true;
     }
 
     async_context_remove_at_time_worker(cyw43_arch_async_context(), &state->resend_worker);
@@ -89,8 +88,8 @@ static void ntp_recv_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, co
         pbuf_copy_partial(p, seconds_buf, sizeof(seconds_buf), 40);
         uint32_t seconds_since_1900 = seconds_buf[0] << 24 | seconds_buf[1] << 16 | seconds_buf[2] << 8 | seconds_buf[3];
         uint32_t seconds_since_1970 = seconds_since_1900 - NTP_DELTA;
-        time_t epoch = seconds_since_1970;
-        ntp_result(state, 0, &epoch);
+        time_t ts = seconds_since_1970;
+        ntp_result(state, 0, &ts);
     }
     else
     {
@@ -127,6 +126,7 @@ static void resend_worker_fn(__unused async_context_t *context, async_at_time_wo
     // async_context_acquire_lock_blocking(context);
 
     NTP_T *state = (NTP_T *)worker->user_data;
+    strcpy(pico_status.ntp_err_msg, "ntp request failed");
     printf("ntp request failed\n");
     ntp_result(state, -1, NULL);
 
@@ -154,8 +154,6 @@ static NTP_T *ntp_init(void)
     state->request_worker.user_data = state;
     state->resend_worker.do_work = resend_worker_fn;
     state->resend_worker.user_data = state;
-    state->ntp_synchronized = false;
-    memset(state->timestr, 0, sizeof(state->timestr));
     return state;
 }
 

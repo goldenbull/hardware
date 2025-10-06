@@ -19,9 +19,12 @@ typedef struct
 
     // timestamp
     bool ntp_time_fetched;
+    char ntp_err_msg[128];
     absolute_time_t base_abs_time;
-    struct tm base_tm;
+    time_t base_ntp_ts;
     int base_microsec;
 } PicoStatus;
+
+extern PicoStatus pico_status; // global status
 
 #endif
