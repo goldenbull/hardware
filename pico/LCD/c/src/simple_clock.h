@@ -13,7 +13,7 @@ typedef struct
     // LCD
     int cur_brightness;
     int brightness_levels[4]; // predefined levels
-    uint16_t *Image;
+    bool show_heart;
 
     // timestamp
     bool ntp_time_fetched;

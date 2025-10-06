@@ -30,6 +30,7 @@
 #define _IMAGEDATA_H_
 
 extern const unsigned char gImage_1inch14_1[];
+extern const unsigned char gImg_my_heart[];
 
 #endif
 /* FILE END */

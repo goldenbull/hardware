@@ -5,7 +5,7 @@
 *----------------
 * |	This version:   V1.0
 * | Date        :   2021-03-16
-* | Info        :   
+* | Info        :
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documnetation files (the "Software"), to deal
@@ -32,30 +32,28 @@
 #include "DEV_Config.h"
 #include <stdint.h>
 
-#include <stdlib.h>     //itoa()
+#include <stdlib.h> //itoa()
 #include <stdio.h>
-
 
 #define LCD_1IN14_HEIGHT 240
 #define LCD_1IN14_WIDTH 135
 
-
 #define HORIZONTAL 0
-#define VERTICAL   1
+#define VERTICAL 1
 
-#define LCD_1IN14_SetBacklight(Value) ; 
+#define LCD_1IN14_SetBacklight(Value) ;
 
-
-typedef struct{
+typedef struct
+{
     UWORD WIDTH;
     UWORD HEIGHT;
     UBYTE SCAN_DIR;
-}LCD_1IN14_ATTRIBUTES;
+} LCD_1IN14_ATTRIBUTES;
 extern LCD_1IN14_ATTRIBUTES LCD_1IN14;
 
 /********************************************************************************
-function:	
-			Macro definition variable name
+function:
+            Macro definition variable name
 ********************************************************************************/
 void LCD_1IN14_Init(UBYTE Scan_dir);
 void LCD_1IN14_Clear(UWORD Color);

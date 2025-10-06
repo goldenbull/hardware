@@ -5,7 +5,7 @@
 *----------------
 * |	This version:   V1.0
 * | Date        :   2021-03-16
-* | Info        :   
+* | Info        :
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documnetation files (the "Software"), to deal
@@ -31,14 +31,10 @@
 
 #include "DEV_Config.h"
 
- 
-
 extern int Infrared_PIN;
 
 void SET_Infrared_PIN(uint8_t PIN);
 
-int   Read_Infrared_Value(void);
-
-
+int Read_Infrared_Value(void);
 
 #endif

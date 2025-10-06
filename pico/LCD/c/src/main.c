@@ -11,6 +11,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/udp.h"
 
+#include "ImageData.h"
 #include "simple_clock.h"
 #include "lib_lcd.h"
 #include "lib_wifi.h"
@@ -38,6 +39,7 @@ void init_pico_status()
     pico_status.brightness_levels[1] = 10;
     pico_status.brightness_levels[2] = 30;
     pico_status.brightness_levels[3] = 80;
+    pico_status.show_heart = false;
 
     pico_status.ntp_time_fetched = false;
     memset(pico_status.ntp_err_msg, 0, sizeof(pico_status.ntp_err_msg));
@@ -80,6 +82,18 @@ void check_keys()
         }
 
         DEV_SET_PWM(pico_status.cur_brightness);
+    }
+
+    if (!(pico_status.key_a_prev_is_down && pico_status.key_b_prev_is_down) && (key_a_is_down && key_b_is_down))
+    {
+        // 小彩蛋
+        pico_status.show_heart = true;
+        Paint_Clear(BLACK);
+    }
+    else if ((pico_status.key_a_prev_is_down && pico_status.key_b_prev_is_down) && !(key_a_is_down && key_b_is_down))
+    {
+        pico_status.show_heart = false;
+        Paint_Clear(BLACK);
     }
 
     if (!pico_status.key_ctrl_prev_is_down && key_ctrl_is_down)
@@ -131,27 +145,31 @@ int main()
     char buf[1024];
     while (true)
     {
-        absolute_time_t cur_abs_ts = get_absolute_time();
-        int64_t diff_us = absolute_time_diff_us(pico_status.base_abs_time, cur_abs_ts);
-        time_t cur_ts = pico_status.base_ntp_ts + diff_us / 1000000;
-        double frac_sec = diff_us % 1000000 / 1000000.0;
-        struct tm now;
-        gmtime_r(&cur_ts, &now);
-
-        // show on lcd
-        // Paint_Clear(BLACK);
-
-        // date
-        sprintf(buf, "%04d-%02d-%02d", now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
-        Paint_DrawString_EN(30, 40, buf, &Font24, WHITE, BLACK);
-
-        // time
-        sprintf(buf, "%02d:%02d:%02d.%02d", now.tm_hour + 8, now.tm_min, now.tm_sec, (int)(frac_sec * 100)); // timezone hardcoded to +8
-        Paint_DrawString_EN(20, 80, buf, &Font24, WHITE, BLACK);
-
         check_keys();
+    
+        if (pico_status.show_heart)
+        {
+            Paint_DrawImage((const unsigned char *)gImg_my_heart, 30, 0, 128, 135);
+        }
+        else
+        {
+            absolute_time_t cur_abs_ts = get_absolute_time();
+            int64_t diff_us = absolute_time_diff_us(pico_status.base_abs_time, cur_abs_ts);
+            time_t cur_ts = pico_status.base_ntp_ts + diff_us / 1000000;
+            double frac_sec = diff_us % 1000000 / 1000000.0;
+            struct tm now;
+            gmtime_r(&cur_ts, &now);
 
-        // TODO: special image for special keys
+            // date
+            sprintf(buf, "%04d-%02d-%02d", now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
+            Paint_DrawString_EN(30, 40, buf, &Font24, WHITE, BLACK);
+
+            // time
+            sprintf(buf, "%02d:%02d:%02d.%02d", now.tm_hour + 8, now.tm_min, now.tm_sec, (int)(frac_sec * 100)); // timezone hardcoded to +8
+            Paint_DrawString_EN(20, 80, buf, &Font24, WHITE, BLACK);
+        }
+
+        // show image in memory
         LCD_1IN14_Display(Image);
     }
 
