@@ -7,14 +7,12 @@ typedef struct
 {
     // keys
     bool key_a_prev_is_down;
-    bool key_a_keydown_handled;
     bool key_b_prev_is_down;
-    bool key_b_keydown_handled;
-    bool key_bs_prev_is_down;
-    bool key_bs_keydown_handled;
+    bool key_ctrl_prev_is_down;
 
     // LCD
     int cur_brightness;
+    int brightness_levels[4]; // predefined levels
     uint16_t *Image;
 
     // timestamp

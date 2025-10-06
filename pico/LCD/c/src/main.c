@@ -30,19 +30,68 @@ PicoStatus pico_status = {0}; // global status
 void init_pico_status()
 {
     pico_status.key_a_prev_is_down = false;
-    pico_status.key_a_keydown_handled = true;
     pico_status.key_b_prev_is_down = false;
-    pico_status.key_b_keydown_handled = true;
-    pico_status.key_bs_prev_is_down = false;
-    pico_status.key_bs_keydown_handled = true;
+    pico_status.key_ctrl_prev_is_down = false;
 
-    pico_status.cur_brightness = 30;
+    pico_status.cur_brightness = 10;
+    pico_status.brightness_levels[0] = 0;
+    pico_status.brightness_levels[1] = 10;
+    pico_status.brightness_levels[2] = 30;
+    pico_status.brightness_levels[3] = 80;
 
     pico_status.ntp_time_fetched = false;
     memset(pico_status.ntp_err_msg, 0, sizeof(pico_status.ntp_err_msg));
     pico_status.base_abs_time = 0;
     pico_status.base_ntp_ts = 0;
     pico_status.base_microsec = 0;
+}
+
+void check_keys()
+{
+    bool key_a_is_down = DEV_Digital_Read(KEY_A) == 0;
+    bool key_b_is_down = DEV_Digital_Read(KEY_B) == 0;
+    bool key_ctrl_is_down = DEV_Digital_Read(KEY_ctrl) == 0;
+
+    if (!pico_status.key_a_prev_is_down && key_a_is_down)
+    {
+        // key a pressed, increase to next level
+        for (int i = 0; i < 4; i++)
+        {
+            if (pico_status.brightness_levels[i] > pico_status.cur_brightness)
+            {
+                pico_status.cur_brightness = MIN(100, pico_status.brightness_levels[i]);
+                break;
+            }
+        }
+
+        DEV_SET_PWM(pico_status.cur_brightness);
+    }
+
+    if (!pico_status.key_b_prev_is_down && key_b_is_down)
+    {
+        // key b pressed
+        for (int i = 3; i >= 0; i--)
+        {
+            if (pico_status.brightness_levels[i] < pico_status.cur_brightness)
+            {
+                pico_status.cur_brightness = MAX(0, pico_status.brightness_levels[i]);
+                break;
+            }
+        }
+
+        DEV_SET_PWM(pico_status.cur_brightness);
+    }
+
+    if (!pico_status.key_ctrl_prev_is_down && key_ctrl_is_down)
+    {
+        // bootsel pressed, reboot
+        cyw43_arch_deinit();
+        watchdog_reboot(0, 0, 0);
+    }
+
+    pico_status.key_a_prev_is_down = key_a_is_down;
+    pico_status.key_b_prev_is_down = key_b_is_down;
+    pico_status.key_ctrl_prev_is_down = key_ctrl_is_down; // actually, not needed
 }
 
 int main()
@@ -77,6 +126,8 @@ int main()
     }
 
     // 主循环，刷新显示，处理按键
+    Paint_Clear(BLACK);
+    DEV_SET_PWM(pico_status.cur_brightness);
     char buf[1024];
     while (true)
     {
@@ -88,7 +139,7 @@ int main()
         gmtime_r(&cur_ts, &now);
 
         // show on lcd
-        Paint_Clear(BLACK);
+        // Paint_Clear(BLACK);
 
         // date
         sprintf(buf, "%04d-%02d-%02d", now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
@@ -97,6 +148,10 @@ int main()
         // time
         sprintf(buf, "%02d:%02d:%02d.%02d", now.tm_hour + 8, now.tm_min, now.tm_sec, (int)(frac_sec * 100)); // timezone hardcoded to +8
         Paint_DrawString_EN(20, 80, buf, &Font24, WHITE, BLACK);
+
+        check_keys();
+
+        // TODO: special image for special keys
         LCD_1IN14_Display(Image);
     }
 

@@ -36,7 +36,7 @@ void init_lcd()
 {
     printf("init LCD_1in14\n");
     DEV_Module_Init();
-    DEV_SET_PWM(30);
+    DEV_SET_PWM(10);
     LCD_1IN14_Init(HORIZONTAL);
     LCD_1IN14_Clear(WHITE);
 
@@ -53,6 +53,15 @@ void init_lcd()
     Paint_Clear(WHITE);
     Paint_SetRotate(ROTATE_0);
     Paint_Clear(WHITE);
+
+    SET_Infrared_PIN(KEY_A);
+    SET_Infrared_PIN(KEY_B);
+
+    SET_Infrared_PIN(KEY_up);
+    SET_Infrared_PIN(KEY_dowm);
+    SET_Infrared_PIN(KEY_left);
+    SET_Infrared_PIN(KEY_right);
+    SET_Infrared_PIN(KEY_ctrl);
 }
 
 /* set address */
@@ -154,23 +163,23 @@ int LCD_1in14_test(void)
     DEV_Delay_ms(1000);
 
     // start LCD
-    uint8_t keyA = 15;
-    uint8_t keyB = 17;
+    // uint8_t keyA = 15;
+    // uint8_t keyB = 17;
 
-    uint8_t up = 2;
-    uint8_t dowm = 18;
-    uint8_t left = 16;
-    uint8_t right = 20;
-    uint8_t ctrl = 3;
+    // uint8_t up = 2;
+    // uint8_t dowm = 18;
+    // uint8_t left = 16;
+    // uint8_t right = 20;
+    // uint8_t ctrl = 3;
 
-    SET_Infrared_PIN(keyA);
-    SET_Infrared_PIN(keyB);
+    // SET_Infrared_PIN(keyA);
+    // SET_Infrared_PIN(keyB);
 
-    SET_Infrared_PIN(up);
-    SET_Infrared_PIN(dowm);
-    SET_Infrared_PIN(left);
-    SET_Infrared_PIN(right);
-    SET_Infrared_PIN(ctrl);
+    // SET_Infrared_PIN(up);
+    // SET_Infrared_PIN(dowm);
+    // SET_Infrared_PIN(left);
+    // SET_Infrared_PIN(right);
+    // SET_Infrared_PIN(ctrl);
 
     Paint_Clear(WHITE);
     Paint_DrawRectangle(208, 12, 229, 32, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_EMPTY);
@@ -193,11 +202,11 @@ int LCD_1in14_test(void)
         }
 
         Paint_Clear(WHITE);
-        if (DEV_Digital_Read(keyA) == 0)
+        if (DEV_Digital_Read(KEY_A) == 0)
         {
             Paint_DrawRectangle(208, 12, 228, 32, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
             LCD_1IN14_DisplayWindows(208, 12, 228, 32, Image);
-            printf("gpio =%d\r\n", keyA);
+            printf("gpio =%d\r\n", KEY_A);
 
             cur_brightness += 10;
             if (cur_brightness > 100)
@@ -211,11 +220,11 @@ int LCD_1in14_test(void)
             LCD_1IN14_DisplayWindows(208, 12, 228, 32, Image);
         }
 
-        if (DEV_Digital_Read(keyB) == 0)
+        if (DEV_Digital_Read(KEY_B) == 0)
         {
             Paint_DrawRectangle(208, 103, 228, 123, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
             LCD_1IN14_DisplayWindows(208, 103, 228, 123, Image);
-            printf("gpio =%d\r\n", keyB);
+            printf("gpio =%d\r\n", KEY_B);
 
             cur_brightness -= 10;
             if (cur_brightness < 0)
@@ -229,11 +238,11 @@ int LCD_1in14_test(void)
             LCD_1IN14_DisplayWindows(208, 103, 228, 123, Image);
         }
 
-        if (DEV_Digital_Read(up) == 0)
+        if (DEV_Digital_Read(KEY_up) == 0)
         {
             Paint_DrawRectangle(37, 35, 57, 55, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
             LCD_1IN14_DisplayWindows(37, 35, 57, 55, Image);
-            printf("gpio =%d\r\n", up);
+            printf("gpio =%d\r\n", KEY_up);
         }
         else
         {
@@ -241,11 +250,11 @@ int LCD_1in14_test(void)
             LCD_1IN14_DisplayWindows(37, 35, 57, 55, Image);
         }
 
-        if (DEV_Digital_Read(dowm) == 0)
+        if (DEV_Digital_Read(KEY_dowm) == 0)
         {
             Paint_DrawRectangle(37, 85, 57, 105, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
             LCD_1IN14_DisplayWindows(37, 85, 57, 105, Image);
-            printf("gpio =%d\r\n", dowm);
+            printf("gpio =%d\r\n", KEY_dowm);
         }
         else
         {
@@ -253,11 +262,11 @@ int LCD_1in14_test(void)
             LCD_1IN14_DisplayWindows(37, 85, 57, 105, Image);
         }
 
-        if (DEV_Digital_Read(left) == 0)
+        if (DEV_Digital_Read(KEY_left) == 0)
         {
             Paint_DrawRectangle(12, 60, 32, 80, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
             LCD_1IN14_DisplayWindows(12, 60, 32, 80, Image);
-            printf("gpio =%d\r\n", left);
+            printf("gpio =%d\r\n", KEY_left);
         }
         else
         {
@@ -265,11 +274,11 @@ int LCD_1in14_test(void)
             LCD_1IN14_DisplayWindows(12, 60, 32, 80, Image);
         }
 
-        if (DEV_Digital_Read(right) == 0)
+        if (DEV_Digital_Read(KEY_right) == 0)
         {
             Paint_DrawRectangle(62, 60, 82, 80, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
             LCD_1IN14_DisplayWindows(62, 60, 82, 80, Image);
-            printf("gpio =%d\r\n", right);
+            printf("gpio =%d\r\n", KEY_right);
         }
         else
         {
@@ -277,11 +286,11 @@ int LCD_1in14_test(void)
             LCD_1IN14_DisplayWindows(62, 60, 82, 80, Image);
         }
 
-        if (DEV_Digital_Read(ctrl) == 0)
+        if (DEV_Digital_Read(KEY_ctrl) == 0)
         {
             Paint_DrawRectangle(37, 60, 57, 80, 0xF800, DOT_PIXEL_2X2, DRAW_FILL_FULL);
             LCD_1IN14_DisplayWindows(37, 60, 57, 80, Image);
-            printf("gpio =%d\r\n", ctrl);
+            printf("gpio =%d\r\n", KEY_ctrl);
         }
         else
         {

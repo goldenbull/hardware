@@ -9,6 +9,14 @@
 #include "LCD_1in14.h"
 #include "Infrared.h"
 
+#define KEY_A 15
+#define KEY_B 17
+#define KEY_up 2
+#define KEY_dowm 18
+#define KEY_left 16
+#define KEY_right 20
+#define KEY_ctrl 3
+
 extern UWORD *Image;
 
 void init_lcd();
