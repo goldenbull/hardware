@@ -24,6 +24,4 @@ typedef struct
     int base_microsec;
 } PicoStatus;
 
-void init_pico_status(PicoStatus* status);
-
 #endif

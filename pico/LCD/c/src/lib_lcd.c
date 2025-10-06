@@ -32,13 +32,13 @@
 
 UWORD *Image; // cached image for LCD
 
-void init_lcd(PicoStatus *status)
+void init_lcd()
 {
     printf("init LCD_1in14\n");
     DEV_Module_Init();
-    DEV_SET_PWM(status->cur_brightness);
+    DEV_SET_PWM(30);
     LCD_1IN14_Init(HORIZONTAL);
-    LCD_1IN14_Clear(BLACK);
+    LCD_1IN14_Clear(WHITE);
 
     UDOUBLE Imagesize = LCD_1IN14_HEIGHT * LCD_1IN14_WIDTH * 2;
     if ((Image = (UWORD *)malloc(Imagesize)) == NULL)
@@ -50,8 +50,9 @@ void init_lcd(PicoStatus *status)
     // Create a new image cache named IMAGE_RGB and fill it
     Paint_NewImage((UBYTE *)Image, LCD_1IN14.WIDTH, LCD_1IN14.HEIGHT, 0, WHITE);
     Paint_SetScale(65);
+    Paint_Clear(WHITE);
     Paint_SetRotate(ROTATE_0);
-    Paint_Clear(BLACK);
+    Paint_Clear(WHITE);
 }
 
 /* set address */
@@ -149,18 +150,6 @@ int LCD_1in14_test(void)
     DEV_Delay_ms(1000);
 #endif
 
-    // connect WIFI test
-    Paint_Clear(WHITE);
-    if (cyw43_arch_wifi_connect_timeout_ms("CU_fairyland", "3.1415926535897932", CYW43_AUTH_WPA2_AES_PSK, 30000))
-    {
-        Paint_DrawString_EN(20, 50, "WiFi error", &Font16, RED, WHITE);
-    }
-    else
-    {
-        Paint_DrawString_EN(20, 50, "WiFi OK", &Font16, GREEN, WHITE);
-    }
-
-    // run_ntp_test();
     LCD_1IN14_Display(Image);
     DEV_Delay_ms(1000);
 

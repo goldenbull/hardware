@@ -7,12 +7,12 @@ typedef struct NTP_T_
     struct udp_pcb *ntp_pcb;
     async_at_time_worker_t request_worker;
     async_at_time_worker_t resend_worker;
+    bool ntp_synchronized;
     char timestr[64];
 } NTP_T;
 
 extern NTP_T* ntp_state;
 
-int init_wifi_connect();
-void start_query_ntp();
+int start_query_ntp();
 
 #endif

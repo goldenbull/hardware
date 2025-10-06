@@ -35,5 +35,5 @@ target_link_libraries(main
     pico_stdlib
     hardware_clocks
     hardware_spi
-    pico_cyw43_arch_lwip_poll
+    pico_cyw43_arch_lwip_threadsafe_background
     )

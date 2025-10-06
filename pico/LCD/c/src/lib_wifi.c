@@ -18,7 +18,7 @@
 #define NTP_MSG_LEN 48
 #define NTP_PORT 123
 #define NTP_DELTA 2208988800 // seconds between 1 Jan 1900 and 1 Jan 1970
-#define NTP_TEST_TIME_MS (30 * 1000)
+#define NTP_TEST_TIME_MS (5 * 1000)
 #define NTP_RESEND_TIME_MS (10 * 1000)
 
 NTP_T *ntp_state = NULL;
@@ -30,10 +30,12 @@ static void ntp_result(NTP_T *state, int status, time_t *result)
     {
         struct tm *utc = gmtime(result);
         sprintf(state->timestr,
-                "%04d-%02d-%02d %02d:%02d:%02d\n",
+                "%04d-%02d-%02d %02d:%02d:%02d",
                 utc->tm_year + 1900, utc->tm_mday, utc->tm_mon + 1,
                 utc->tm_hour + 8, utc->tm_min, utc->tm_sec); // timezone hardcoded to +8
+        state->ntp_synchronized = true;
     }
+
     async_context_remove_at_time_worker(cyw43_arch_async_context(), &state->resend_worker);
     hard_assert(async_context_add_at_time_worker_in_ms(cyw43_arch_async_context(), &state->request_worker, NTP_TEST_TIME_MS)); // repeat the request in future
     printf("Next request in %ds\n", NTP_TEST_TIME_MS / 1000);
@@ -74,7 +76,7 @@ static void ntp_dns_found(const char *hostname, const ip_addr_t *ipaddr, void *a
 }
 
 // NTP data received
-static void ntp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port)
+static void ntp_recv_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port)
 {
     NTP_T *state = (NTP_T *)arg;
     uint8_t mode = pbuf_get_at(p, 0) & 0x7;
@@ -101,6 +103,8 @@ static void ntp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_ad
 // Called to make a NTP request
 static void request_worker_fn(__unused async_context_t *context, async_at_time_worker_t *worker)
 {
+    // async_context_acquire_lock_blocking(context);
+
     NTP_T *state = (NTP_T *)worker->user_data;
     hard_assert(async_context_add_at_time_worker_in_ms(cyw43_arch_async_context(), &state->resend_worker, NTP_RESEND_TIME_MS)); // in case UDP request is lost
     int err = dns_gethostbyname(NTP_SERVER, &state->ntp_server_address, ntp_dns_found, state);
@@ -113,30 +117,20 @@ static void request_worker_fn(__unused async_context_t *context, async_at_time_w
         printf("dns request failed\n");
         ntp_result(state, -1, NULL);
     }
+
+    // async_context_release_lock(context);
 }
 
 // Called to resend an NTP request if it appears to get lost
 static void resend_worker_fn(__unused async_context_t *context, async_at_time_worker_t *worker)
 {
+    // async_context_acquire_lock_blocking(context);
+
     NTP_T *state = (NTP_T *)worker->user_data;
     printf("ntp request failed\n");
     ntp_result(state, -1, NULL);
-}
 
-int init_wifi_connect()
-{
-    int ret = cyw43_arch_init();
-    if (ret)
-    {
-        printf("cyw43_arch_init failed, err=%d", ret);
-    }
-    else
-    {
-        printf("cyw43_arch_init success\n");
-        cyw43_arch_enable_sta_mode();
-    }
-
-    return cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000);
+    // async_context_release_lock(context);
 }
 
 // Perform initialisation
@@ -155,22 +149,24 @@ static NTP_T *ntp_init(void)
         free(state);
         return NULL;
     }
-    udp_recv(state->ntp_pcb, ntp_recv, state);
+    udp_recv(state->ntp_pcb, ntp_recv_callback, state);
     state->request_worker.do_work = request_worker_fn;
     state->request_worker.user_data = state;
     state->resend_worker.do_work = resend_worker_fn;
     state->resend_worker.user_data = state;
+    state->ntp_synchronized = false;
     memset(state->timestr, 0, sizeof(state->timestr));
     return state;
 }
 
 // Runs ntp test forever
-void start_query_ntp()
+int start_query_ntp()
 {
     ntp_state = ntp_init();
     if (!ntp_state)
-        return;
+        return PICO_ERROR_GENERIC;
     hard_assert(async_context_add_at_time_worker_in_ms(cyw43_arch_async_context(), &ntp_state->request_worker, 0)); // make the first request
 
     // free(state); // TODO: somewhere to release memory? or just reboot
+    return PICO_OK;
 }

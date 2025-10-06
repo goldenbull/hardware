@@ -9,11 +9,9 @@
 #include "LCD_1in14.h"
 #include "Infrared.h"
 
-#include "simple_clock.h"
-
 extern UWORD *Image;
 
-void init_lcd(PicoStatus *status);
+void init_lcd();
 void lcd_log_info(int x, int y, char *msg);
 void lcd_log_error(int x, int y, char *msg);
 
