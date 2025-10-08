@@ -3,12 +3,22 @@
 
 #include <time.h>
 
-typedef struct 
+typedef struct
+{
+    // true if pressed
+    bool up;
+    bool down;
+    bool left;
+    bool right;
+    bool ctrl;
+    bool a;
+    bool b;
+} LcdKeyStatus;
+
+typedef struct
 {
     // keys
-    bool key_a_prev_is_down;
-    bool key_b_prev_is_down;
-    bool key_ctrl_prev_is_down;
+    LcdKeyStatus prev_keys;
 
     // LCD
     int cur_brightness;

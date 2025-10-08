@@ -30,9 +30,7 @@ PicoStatus pico_status = {0}; // global status
 
 void init_pico_status()
 {
-    pico_status.key_a_prev_is_down = false;
-    pico_status.key_b_prev_is_down = false;
-    pico_status.key_ctrl_prev_is_down = false;
+    memset(&pico_status.prev_keys, 0, sizeof(pico_status.prev_keys));
 
     pico_status.cur_brightness = 10;
     pico_status.brightness_levels[0] = 0;
@@ -50,13 +48,18 @@ void init_pico_status()
 
 void check_keys()
 {
-    bool key_a_is_down = DEV_Digital_Read(KEY_A) == 0;
-    bool key_b_is_down = DEV_Digital_Read(KEY_B) == 0;
-    bool key_ctrl_is_down = DEV_Digital_Read(KEY_ctrl) == 0;
+    LcdKeyStatus cur_keys = {false};
+    cur_keys.a = DEV_Digital_Read(KEY_A) == 0;
+    cur_keys.b = DEV_Digital_Read(KEY_B) == 0;
+    cur_keys.up = DEV_Digital_Read(KEY_up) == 0;
+    cur_keys.down = DEV_Digital_Read(KEY_dowm) == 0;
+    cur_keys.left = DEV_Digital_Read(KEY_left) == 0;
+    cur_keys.right = DEV_Digital_Read(KEY_right) == 0;
+    cur_keys.ctrl = DEV_Digital_Read(KEY_ctrl) == 0;
 
-    if (!pico_status.key_a_prev_is_down && key_a_is_down)
+    if (!pico_status.prev_keys.up && cur_keys.up)
     {
-        // key a pressed, increase to next level
+        // key up pressed, increase to next level
         for (int i = 0; i < 4; i++)
         {
             if (pico_status.brightness_levels[i] > pico_status.cur_brightness)
@@ -69,9 +72,9 @@ void check_keys()
         DEV_SET_PWM(pico_status.cur_brightness);
     }
 
-    if (!pico_status.key_b_prev_is_down && key_b_is_down)
+    if (!pico_status.prev_keys.down && cur_keys.down)
     {
-        // key b pressed
+        // key down
         for (int i = 3; i >= 0; i--)
         {
             if (pico_status.brightness_levels[i] < pico_status.cur_brightness)
@@ -84,28 +87,26 @@ void check_keys()
         DEV_SET_PWM(pico_status.cur_brightness);
     }
 
-    if (!(pico_status.key_a_prev_is_down && pico_status.key_b_prev_is_down) && (key_a_is_down && key_b_is_down))
+    if (!(pico_status.prev_keys.ctrl && pico_status.prev_keys.a) && (cur_keys.ctrl && cur_keys.a))
     {
         // 小彩蛋
         pico_status.show_heart = true;
         Paint_Clear(BLACK);
     }
-    else if ((pico_status.key_a_prev_is_down && pico_status.key_b_prev_is_down) && !(key_a_is_down && key_b_is_down))
+    else if ((pico_status.prev_keys.ctrl && pico_status.prev_keys.a) && !(cur_keys.ctrl && cur_keys.a))
     {
         pico_status.show_heart = false;
         Paint_Clear(BLACK);
     }
 
-    if (!pico_status.key_ctrl_prev_is_down && key_ctrl_is_down)
+    if (cur_keys.ctrl && cur_keys.b)
     {
-        // bootsel pressed, reboot
+        // reboot
         cyw43_arch_deinit();
         watchdog_reboot(0, 0, 0);
     }
 
-    pico_status.key_a_prev_is_down = key_a_is_down;
-    pico_status.key_b_prev_is_down = key_b_is_down;
-    pico_status.key_ctrl_prev_is_down = key_ctrl_is_down; // actually, not needed
+    pico_status.prev_keys = cur_keys;
 }
 
 int main()
@@ -146,7 +147,7 @@ int main()
     while (true)
     {
         check_keys();
-    
+
         if (pico_status.show_heart)
         {
             Paint_DrawImage((const unsigned char *)gImg_my_heart, 30, 0, 128, 135);
