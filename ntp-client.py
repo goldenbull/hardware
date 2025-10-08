@@ -4,9 +4,9 @@ import datetime
 import threading
 import time
 
-NTP_SERVER = '192.168.88.201'
+NTP_SERVER = "192.168.2.3"
 NTP_PORT = 123
-TIME1970 = 2208988800  # January 1, 1970, 00:00:00 UTC in NTP timestamp format
+SECONDS_FROM_1900_TO_1970 = 2208988800
 
 
 def recv_worker():
@@ -17,17 +17,19 @@ def recv_worker():
 
     # Unpack the NTP response packet
     # The transmit timestamp is located at bytes 40-47
+    # 32bit for seconds since 1900, 32bit for second fraction
     # '>II' indicates two unsigned integers in big-endian format
-    unpacked_data = struct.unpack('>IIIIIIIIIIII', data)
+    unpacked_data = struct.unpack(">IIIIIIIIIIII", data)
     ntp_timestamp = unpacked_data[10]  # Transmit Timestamp (integer part)
-    frac = unpacked_data[11]
+    frac = unpacked_data[11]  # second fraction * 2^32
 
     # Convert NTP timestamp to Unix timestamp
-    unix_timestamp = ntp_timestamp - TIME1970
+    unix_timestamp = ntp_timestamp - SECONDS_FROM_1900_TO_1970
 
     # Convert Unix timestamp to a human-readable datetime object
     dt_object = datetime.datetime.fromtimestamp(unix_timestamp, tz=datetime.timezone.utc)
-    print(f"Manual NTP time: {dt_object} {frac}")
+    print(f"{ntp_timestamp} {frac}")
+    print(f"Manual NTP time: {dt_object}.{frac/(2**32)}")
 
 
 if __name__ == "__main__":
@@ -44,26 +46,11 @@ if __name__ == "__main__":
         # Construct the NTP request packet (48 bytes, mostly zeros with a specific header)
         # Here, LI=0 (no warning), VN=4, Mode=3 (client).
         # 00 100 011
-        ntp_request = b'\x23' + 47 * b'\0'
+        ntp_request = b"\x23" + 47 * b"\0"
 
         # Send the request
         client_socket.sendto(ntp_request, (NTP_SERVER, NTP_PORT))
-
-        data, addr = client_socket.recvfrom(48)
-
-        # Unpack the NTP response packet
-        # The transmit timestamp is located at bytes 40-47
-        # '>II' indicates two unsigned integers in big-endian format
-        unpacked_data = struct.unpack('>IIIIIIIIIIII', data)
-        ntp_timestamp = unpacked_data[10]  # Transmit Timestamp (integer part)
-        frac = unpacked_data[11] / 2 ** 32
-
-        # Convert NTP timestamp to Unix timestamp
-        unix_timestamp = ntp_timestamp - TIME1970
-
-        # Convert Unix timestamp to a human-readable datetime object
-        dt_object = datetime.datetime.fromtimestamp(unix_timestamp, tz=datetime.timezone.utc)
-        print(f"Manual NTP time: {dt_object} {frac}")
+        recv_worker()
 
     except socket.timeout:
         print("Error: NTP server did not respond within the timeout.")

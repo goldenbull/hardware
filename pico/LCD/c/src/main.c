@@ -150,7 +150,9 @@ int main()
 
         if (pico_status.show_heart)
         {
-            Paint_DrawImage((const unsigned char *)gImg_my_heart, 30, 0, 128, 135);
+            // LCD h135*w240
+            // image h135*w128
+            Paint_DrawImage((const unsigned char *)gImg_my_heart, (240 - 128) / 2, 0, 128, 135);
         }
         else
         {
@@ -162,7 +164,8 @@ int main()
             gmtime_r(&cur_ts, &now);
 
             // date
-            sprintf(buf, "%04d-%02d-%02d", now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
+            static const char **daynames[] = {"日", "一", "二", "三", "四", "五", "六"};
+            sprintf(buf, "%04d-%02d-%02d %d", now.tm_year + 1900, now.tm_mon + 1, now.tm_mday, daynames[now.tm_wday]);
             Paint_DrawString_EN(30, 40, buf, &Font24, WHITE, BLACK);
 
             // time
