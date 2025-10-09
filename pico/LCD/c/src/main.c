@@ -19,10 +19,10 @@
 
 /*********************************************************************************************
 
-åŠŸèƒ½è®¾è®¡ï¼š
-- å¯åŠ¨åè¿æ¥WiFiï¼Œé€šè¿‡NTPè·å¾—æ—¶é—´ï¼Œæ¯å°æ—¶åŒæ­¥ä¸€æ¬¡NTP
-- ABæŒ‰é’®è°ƒèŠ‚äº®åº¦
-- BOOTSELæŒ‰é’®é‡å¯
+¹¦ÄÜÉè¼Æ£º
+- Æô¶¯ºóÁ¬½ÓWiFi£¬Í¨¹ıNTP»ñµÃÊ±¼ä£¬Ã¿Ğ¡Ê±Í¬²½Ò»´ÎNTP
+- AB°´Å¥µ÷½ÚÁÁ¶È
+- BOOTSEL°´Å¥ÖØÆô
 
 */
 
@@ -89,7 +89,7 @@ void check_keys()
 
     if (!(pico_status.prev_keys.ctrl && pico_status.prev_keys.a) && (cur_keys.ctrl && cur_keys.a))
     {
-        // å°å½©è›‹
+        // Ğ¡²Êµ°
         pico_status.show_heart = true;
         Paint_Clear(BLACK);
     }
@@ -128,7 +128,7 @@ int main()
         return -1; // or exit(), nothing to do
     }
 
-    // å¼€å§‹åŒæ­¥NTP
+    // ¿ªÊ¼Í¬²½NTP
     start_query_ntp();
     while (!pico_status.ntp_time_fetched)
     {
@@ -140,7 +140,7 @@ int main()
         sleep_ms(100);
     }
 
-    // ä¸»å¾ªç¯ï¼Œåˆ·æ–°æ˜¾ç¤ºï¼Œå¤„ç†æŒ‰é”®
+    // Ö÷Ñ­»·£¬Ë¢ĞÂÏÔÊ¾£¬´¦Àí°´¼ü
     Paint_Clear(BLACK);
     DEV_SET_PWM(pico_status.cur_brightness);
     char buf[1024];
@@ -164,9 +164,12 @@ int main()
             gmtime_r(&cur_ts, &now);
 
             // date
-            static const char **daynames[] = {"æ—¥", "ä¸€", "äºŒ", "ä¸‰", "å››", "äº”", "å…­"};
-            sprintf(buf, "%04d-%02d-%02d %d", now.tm_year + 1900, now.tm_mon + 1, now.tm_mday, daynames[now.tm_wday]);
-            Paint_DrawString_EN(30, 40, buf, &Font24, WHITE, BLACK);
+            sprintf(buf, "%04d-%02d-%02d", now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
+            Paint_DrawString_EN(13, 40, buf, &Font24, WHITE, BLACK);
+
+            static const char *daynames[] = {"ÈÕ", "Ò»", "¶ş", "Èı", "ËÄ", "Îå", "Áù"};
+            sprintf(buf, "%s", daynames[now.tm_wday]);
+            Paint_DrawString_CN(188, 36, buf, &Font21CN, WHITE, BLACK);
 
             // time
             sprintf(buf, "%02d:%02d:%02d.%02d", now.tm_hour + 8, now.tm_min, now.tm_sec, (int)(frac_sec * 100)); // timezone hardcoded to +8
