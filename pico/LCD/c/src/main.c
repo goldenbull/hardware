@@ -158,7 +158,7 @@ int main()
         {
             absolute_time_t cur_abs_ts = get_absolute_time();
             int64_t diff_us = absolute_time_diff_us(pico_status.base_abs_time, cur_abs_ts);
-            time_t cur_ts = pico_status.base_ntp_ts + diff_us / 1000000;
+            time_t cur_ts = pico_status.base_ntp_ts + diff_us / 1000000 + 3600 * 8; // timezone hardcoded to +8
             double frac_sec = diff_us % 1000000 / 1000000.0;
             struct tm now;
             gmtime_r(&cur_ts, &now);
@@ -172,7 +172,7 @@ int main()
             Paint_DrawString_CN(188, 36, buf, &Font21CN, WHITE, BLACK);
 
             // time
-            sprintf(buf, "%02d:%02d:%02d.%02d", now.tm_hour + 8, now.tm_min, now.tm_sec, (int)(frac_sec * 100)); // timezone hardcoded to +8
+            sprintf(buf, "%02d:%02d:%02d.%02d", now.tm_hour, now.tm_min, now.tm_sec, (int)(frac_sec * 100));
             Paint_DrawString_EN(20, 80, buf, &Font24, WHITE, BLACK);
         }
 
