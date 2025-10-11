@@ -169,7 +169,7 @@ int main()
 
             static const char *daynames[] = {"日", "一", "二", "三", "四", "五", "六"};
             sprintf(buf, "%s", daynames[now.tm_wday]);
-            Paint_DrawString_CN(188, 36, buf, &Font21CN, WHITE, BLACK);
+            Paint_DrawString_CN(195, 36, buf, &Font21CN, WHITE, BLACK);
 
             // time
             sprintf(buf, "%02d:%02d:%02d.%02d", now.tm_hour, now.tm_min, now.tm_sec, (int)(frac_sec * 100));
