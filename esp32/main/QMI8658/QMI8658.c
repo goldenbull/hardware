@@ -87,9 +87,9 @@ void QMI8658_Init(void)
 
 void QMI8658_Loop(void)
 {
-    // getAccelerometer();
+    getAccelerometer();
     // getGyroscope();
-    getAllValues();
+    // getAllValues();
 }
 
 /**
@@ -293,12 +293,13 @@ void getAccelerometer(void)
 {
     uint8_t buf[6];
     I2C_Read(Device_addr, QMI8658_AX_L, buf, 6);
-    Accel.x = (float)((int16_t)((buf[1] << 8) | (buf[0])));
-    Accel.y = (float)((int16_t)((buf[3] << 8) | (buf[2])));
-    Accel.z = (float)((int16_t)((buf[5] << 8) | (buf[4])));
-    Accel.x = Accel.x * accelScales;
-    Accel.y = Accel.y * accelScales;
-    Accel.z = Accel.z * accelScales;
+    int16_t x = (int16_t)((buf[1] << 8) | (buf[0]));
+    int16_t y = (int16_t)((buf[3] << 8) | (buf[2]));
+    int16_t z = (int16_t)((buf[5] << 8) | (buf[4]));
+    // printf("raw value from accelerometer: %12d %12d %12d %.2e\n", x, y, z, accelScales);
+    Accel.x = x * accelScales;
+    Accel.y = y * accelScales;
+    Accel.z = z * accelScales;
 }
 
 void getGyroscope(void)
@@ -327,8 +328,8 @@ void getAllValues(void)
         int16_t h = buf[i * 2 + 1];
         int16_t v = (h << 8) | l;
 
-        ema_values[i] = ema_values[i]*(1-r) + v*r;
-        printf("%6.2f ", ema_values[i]/81.92);
+        ema_values[i] = ema_values[i] * (1 - r) + v * r;
+        printf("%6.2f ", ema_values[i] / 81.92);
     }
 
     printf("\n");

@@ -269,8 +269,8 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   lv_textarea_set_placeholder_text(FlashSize, buf);
   snprintf(buf, sizeof(buf), "%.2f V\r\n", BAT_analogVolts);
   lv_textarea_set_placeholder_text(BAT_Volts, buf);
-  // snprintf(buf, sizeof(buf), "%.2f   %.2f   %.2f\r\n", Accel.x, Accel.y, Accel.z);
-  snprintf(buf, sizeof(buf), "%.2f   %.2f   %.2f\r\n", Gyro.x, Gyro.y, Gyro.z);
+  snprintf(buf, sizeof(buf), "%.2f   %.2f   %.2f\r\n", Accel.x, Accel.y, Accel.z);
+  // snprintf(buf, sizeof(buf), "%.2f   %.2f   %.2f\r\n", Gyro.x, Gyro.y, Gyro.z);
   lv_textarea_set_placeholder_text(Board_deflection, buf);
   if (Scan_finish)
     snprintf(buf, sizeof(buf), "W: %d  B: %d    OK.\r\n", WIFI_NUM, BLE_NUM);

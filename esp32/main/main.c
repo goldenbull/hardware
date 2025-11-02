@@ -15,7 +15,7 @@
 void Driver_Loop(void *parameter)
 {
     Wireless_Init();
-    while(1)
+    while (1)
     {
         QMI8658_Loop();
         BAT_Get_Volts();
@@ -23,6 +23,7 @@ void Driver_Loop(void *parameter)
     }
     vTaskDelete(NULL);
 }
+
 void app_main(void)
 {
     Flash_Searching();
@@ -34,9 +35,9 @@ void app_main(void)
     RGB_Example();
     SD_Init();
     LCD_Init();
-    LVGL_Init();   // returns the screen object
+    LVGL_Init(); // returns the screen object
 
-/********************* Demo *********************/
+    /********************* Demo *********************/
     Lvgl_Example1();
 
     // lv_demo_widgets();
@@ -47,14 +48,15 @@ void app_main(void)
 
     Simulated_Touch_Init();
     xTaskCreatePinnedToCore(
-        Driver_Loop, 
+        Driver_Loop,
         "Other Driver task",
-        4096, 
-        NULL, 
-        3, 
-        NULL, 
+        4096,
+        NULL,
+        3,
+        NULL,
         0);
-    while (1) {
+    while (1)
+    {
         // raise the task priority of LVGL and/or reduce the handler period can improve the performance
         vTaskDelay(pdMS_TO_TICKS(10));
         // The task running lv_timer_handler should have lower priority than that running `lv_tick_inc`
