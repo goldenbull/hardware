@@ -3,7 +3,7 @@
 IMUdata Accel;
 IMUdata Gyro;
 
-uint8_t Device_addr ; // default for SD0/SA0 low, 0x6A if high
+uint8_t Device_addr; // default for SD0/SA0 low, 0x6A if high
 acc_scale_t acc_scale = ACC_RANGE_4G;
 gyro_scale_t gyro_scale = GYR_RANGE_64DPS;
 acc_odr_t acc_odr = acc_odr_norm_8000;
@@ -11,10 +11,12 @@ gyro_odr_t gyro_odr = gyro_odr_norm_8000;
 sensor_state_t sensor_state = sensor_default;
 lpf_t acc_lpf;
 
-float accelScales, gyroScales;
-float accelScales = 0;
+float accelScales = 0, gyroScales = 0;
 uint8_t readings[12];
 uint32_t reading_timestamp_us; // timestamp in arduino micros() time
+
+float ema_values[6] = {};
+
 /**
  * Inialize Wire and send default configs
  * @param addr I2C address of sensor, typically 0x6A or 0x6B
@@ -22,45 +24,72 @@ uint32_t reading_timestamp_us; // timestamp in arduino micros() time
 void QMI8658_Init(void)
 {
     uint8_t buf[1];
-    Device_addr = QMI8658_L_SLAVE_ADDRESS;     
+    Device_addr = QMI8658_L_SLAVE_ADDRESS;
     I2C_Read(Device_addr, QMI8658_REVISION_ID, buf, 1);
-    printf("QMI8658 Device ID: %x\r\n",buf[0]);    // Get chip id
-    setState(sensor_running);             
+    printf("QMI8658 Device ID: %x\r\n", buf[0]); // Get chip id
+    setState(sensor_running);
 
-    setAccScale(acc_scale);            
-    setAccODR(acc_odr);                    
-    setAccLPF(LPF_MODE_0);                  
-    switch (acc_scale) {                
-        // Possible accelerometer scales (and their register bit settings) are:
-        // 2 Gs (00), 4 Gs (01), 8 Gs (10), and 16 Gs  (11).
-        // Here's a bit of an algorith to calculate DPS/(ADC tick) based on that
-        // 2-bit value:
-        case ACC_RANGE_2G:  accelScales = 2.0 / 32768.0; break;
-        case ACC_RANGE_4G:  accelScales = 4.0 / 32768.0; break;
-        case ACC_RANGE_8G:  accelScales = 8.0 / 32768.0; break;
-        case ACC_RANGE_16G: accelScales = 16.0 / 32768.0; break;
+    setAccScale(acc_scale);
+    setAccODR(acc_odr);
+    setAccLPF(LPF_MODE_0);
+    switch (acc_scale)
+    {
+    // Possible accelerometer scales (and their register bit settings) are:
+    // 2 Gs (00), 4 Gs (01), 8 Gs (10), and 16 Gs  (11).
+    // Here's a bit of an algorith to calculate DPS/(ADC tick) based on that
+    // 2-bit value:
+    case ACC_RANGE_2G:
+        accelScales = 2.0 / 32768.0;
+        break;
+    case ACC_RANGE_4G:
+        accelScales = 4.0 / 32768.0;
+        break;
+    case ACC_RANGE_8G:
+        accelScales = 8.0 / 32768.0;
+        break;
+    case ACC_RANGE_16G:
+        accelScales = 16.0 / 32768.0;
+        break;
     }
 
-    setGyroScale(gyro_scale);              
-    setGyroODR(gyro_odr);                       
-    setGyroLPF(LPF_MODE_3);                
-    switch (gyro_scale) {                  
-        // Possible gyro scales (and their register bit settings) are:
-        // 250 DPS (00), 500 DPS (01), 1000 DPS (10), and 2000 DPS  (11).
-        // Here's a bit of an algorith to calculate DPS/(ADC tick) based on that
-        // 2-bit value:
-        case GYR_RANGE_16DPS: gyroScales = 16.0 / 32768.0; break;
-        case GYR_RANGE_32DPS: gyroScales = 32.0 / 32768.0; break;
-        case GYR_RANGE_64DPS: gyroScales = 64.0 / 32768.0; break;
-        case GYR_RANGE_128DPS: gyroScales = 128.0 / 32768.0; break;
-        case GYR_RANGE_256DPS: gyroScales = 256.0 / 32768.0; break;
-        case GYR_RANGE_512DPS: gyroScales = 512.0 / 32768.0; break;
-        case GYR_RANGE_1024DPS: gyroScales = 1024.0 / 32768.0; break;
+    setGyroScale(gyro_scale);
+    setGyroODR(gyro_odr);
+    setGyroLPF(LPF_MODE_3);
+    switch (gyro_scale)
+    {
+    // Possible gyro scales (and their register bit settings) are:
+    // 250 DPS (00), 500 DPS (01), 1000 DPS (10), and 2000 DPS  (11).
+    // Here's a bit of an algorith to calculate DPS/(ADC tick) based on that
+    // 2-bit value:
+    case GYR_RANGE_16DPS:
+        gyroScales = 16.0 / 32768.0;
+        break;
+    case GYR_RANGE_32DPS:
+        gyroScales = 32.0 / 32768.0;
+        break;
+    case GYR_RANGE_64DPS:
+        gyroScales = 64.0 / 32768.0;
+        break;
+    case GYR_RANGE_128DPS:
+        gyroScales = 128.0 / 32768.0;
+        break;
+    case GYR_RANGE_256DPS:
+        gyroScales = 256.0 / 32768.0;
+        break;
+    case GYR_RANGE_512DPS:
+        gyroScales = 512.0 / 32768.0;
+        break;
+    case GYR_RANGE_1024DPS:
+        gyroScales = 1024.0 / 32768.0;
+        break;
     }
 }
+
 void QMI8658_Loop(void)
 {
-  getAccelerometer();
+    // getAccelerometer();
+    // getGyroscope();
+    getAllValues();
 }
 
 /**
@@ -95,7 +124,8 @@ void QMI8658_CTRL9_Write(uint8_t command)
     QMI8658_transmit(QMI8658_CTRL9, command);
 
     // wait for command to be done
-    while (((QMI8658_receive(QMI8658_STATUSINT)) & 0x80) == 0x00);
+    while (((QMI8658_receive(QMI8658_STATUSINT)) & 0x80) == 0x00)
+        ;
 }
 
 /**
@@ -104,11 +134,11 @@ void QMI8658_CTRL9_Write(uint8_t command)
  */
 void setAccODR(acc_odr_t odr)
 {
-    if (sensor_state != sensor_default)                     // If the device is not in the default state
+    if (sensor_state != sensor_default) // If the device is not in the default state
     {
         uint8_t ctrl2 = QMI8658_receive(QMI8658_CTRL2);
-        ctrl2 &= ~QMI8658_AODR_MASK;                        // clear previous setting
-        ctrl2 |= odr;                                       // OR in new setting
+        ctrl2 &= ~QMI8658_AODR_MASK; // clear previous setting
+        ctrl2 |= odr;                // OR in new setting
         QMI8658_transmit(QMI8658_CTRL2, ctrl2);
     }
     acc_odr = odr;
@@ -122,10 +152,10 @@ void setGyroODR(gyro_odr_t odr)
 {
     if (sensor_state != sensor_default)
     {
-    uint8_t ctrl3 = QMI8658_receive(QMI8658_CTRL3);
-    ctrl3 &= ~QMI8658_GODR_MASK; // clear previous setting
-    ctrl3 |= odr; // OR in new setting
-    QMI8658_transmit(QMI8658_CTRL3, ctrl3);
+        uint8_t ctrl3 = QMI8658_receive(QMI8658_CTRL3);
+        ctrl3 &= ~QMI8658_GODR_MASK; // clear previous setting
+        ctrl3 |= odr;                // OR in new setting
+        QMI8658_transmit(QMI8658_CTRL3, ctrl3);
     }
     gyro_odr = odr;
 }
@@ -138,10 +168,10 @@ void setAccScale(acc_scale_t scale)
 {
     if (sensor_state != sensor_default)
     {
-    uint8_t ctrl2 = QMI8658_receive(QMI8658_CTRL2);
-    ctrl2 &= ~QMI8658_ASCALE_MASK; // clear previous setting
-    ctrl2 |= scale << QMI8658_ASCALE_OFFSET; // OR in new setting
-    QMI8658_transmit(QMI8658_CTRL2, ctrl2);
+        uint8_t ctrl2 = QMI8658_receive(QMI8658_CTRL2);
+        ctrl2 &= ~QMI8658_ASCALE_MASK;           // clear previous setting
+        ctrl2 |= scale << QMI8658_ASCALE_OFFSET; // OR in new setting
+        QMI8658_transmit(QMI8658_CTRL2, ctrl2);
     }
     acc_scale = scale;
 }
@@ -154,10 +184,10 @@ void setGyroScale(gyro_scale_t scale)
 {
     if (sensor_state != sensor_default)
     {
-    uint8_t ctrl3 = QMI8658_receive(QMI8658_CTRL3);
-    ctrl3 &= ~QMI8658_GSCALE_MASK; // clear previous setting
-    ctrl3 |= scale << QMI8658_GSCALE_OFFSET; // OR in new setting
-    QMI8658_transmit(QMI8658_CTRL3, ctrl3);
+        uint8_t ctrl3 = QMI8658_receive(QMI8658_CTRL3);
+        ctrl3 &= ~QMI8658_GSCALE_MASK;           // clear previous setting
+        ctrl3 |= scale << QMI8658_GSCALE_OFFSET; // OR in new setting
+        QMI8658_transmit(QMI8658_CTRL3, ctrl3);
     }
     gyro_scale = scale;
 }
@@ -170,11 +200,11 @@ void setAccLPF(lpf_t lpf)
 {
     if (sensor_state != sensor_default)
     {
-    uint8_t ctrl5 = QMI8658_receive(QMI8658_CTRL5);
-    ctrl5 &= !QMI8658_ALPF_MASK;
-    ctrl5 |= lpf << QMI8658_ALPF_OFFSET;
-    ctrl5 |= 0x01; // turn on acc low pass filter
-    QMI8658_transmit(QMI8658_CTRL5, ctrl5);
+        uint8_t ctrl5 = QMI8658_receive(QMI8658_CTRL5);
+        ctrl5 &= !QMI8658_ALPF_MASK;
+        ctrl5 |= lpf << QMI8658_ALPF_OFFSET;
+        ctrl5 |= 0x01; // turn on acc low pass filter
+        QMI8658_transmit(QMI8658_CTRL5, ctrl5);
     }
     acc_lpf = lpf;
 }
@@ -187,11 +217,11 @@ void setGyroLPF(lpf_t lpf)
 {
     if (sensor_state != sensor_default)
     {
-    uint8_t ctrl5 = QMI8658_receive(QMI8658_CTRL5);
-    ctrl5 &= !QMI8658_GLPF_MASK;
-    ctrl5 |= lpf << QMI8658_GLPF_OFFSET;
-    ctrl5 |= 0x10; // turn on gyro low pass filter
-    QMI8658_transmit(QMI8658_CTRL5, ctrl5);
+        uint8_t ctrl5 = QMI8658_receive(QMI8658_CTRL5);
+        ctrl5 &= !QMI8658_GLPF_MASK;
+        ctrl5 |= lpf << QMI8658_GLPF_OFFSET;
+        ctrl5 |= 0x10; // turn on gyro low pass filter
+        QMI8658_transmit(QMI8658_CTRL5, ctrl5);
     }
 }
 
@@ -227,7 +257,7 @@ void setState(sensor_state_t state)
 
         ctrl1 = QMI8658_receive(QMI8658_CTRL1);
         // disable 2MHz oscillator
-        ctrl1|= 0x01;
+        ctrl1 |= 0x01;
         QMI8658_transmit(QMI8658_CTRL1, ctrl1);
         break;
     case sensor_locking:
@@ -259,45 +289,47 @@ void setState(sensor_state_t state)
     sensor_state = state;
 }
 
-
 void getAccelerometer(void)
 {
-
     uint8_t buf[6];
     I2C_Read(Device_addr, QMI8658_AX_L, buf, 6);
-    Accel.x = (float)((int16_t)((buf[1]<<8) | (buf[0])));
-    Accel.y = (float)((int16_t)((buf[3]<<8) | (buf[2])));
-    Accel.z = (float)((int16_t)((buf[5]<<8) | (buf[4])));
+    Accel.x = (float)((int16_t)((buf[1] << 8) | (buf[0])));
+    Accel.y = (float)((int16_t)((buf[3] << 8) | (buf[2])));
+    Accel.z = (float)((int16_t)((buf[5] << 8) | (buf[4])));
     Accel.x = Accel.x * accelScales;
     Accel.y = Accel.y * accelScales;
     Accel.z = Accel.z * accelScales;
-
 }
+
 void getGyroscope(void)
 {
     uint8_t buf[6];
     I2C_Read(Device_addr, QMI8658_GX_L, buf, 6);
-    Gyro.x = (float)((int16_t)((buf[1]<<8) | (buf[0])));
-    Gyro.y = (float)((int16_t)((buf[3]<<8) | (buf[2])));
-    Gyro.z = (float)((int16_t)((buf[5]<<8) | (buf[4])));
-    Gyro.x = Gyro.x * gyroScales;
-    Gyro.y = Gyro.y * gyroScales;
-    Gyro.z = Gyro.z * gyroScales;
+    int16_t x = (int16_t)((buf[1] << 8) | (buf[0]));
+    int16_t y = (int16_t)((buf[3] << 8) | (buf[2]));
+    int16_t z = (int16_t)((buf[5] << 8) | (buf[4]));
+    // printf("raw value from gyroscope: %12d %12d %12d\n", x, y, z);
+    Gyro.x = x * gyroScales;
+    Gyro.y = y * gyroScales;
+    Gyro.z = z * gyroScales;
 }
 
+void getAllValues(void)
+{
+    uint8_t buf[12];
+    I2C_Read(Device_addr, QMI8658_AX_L, buf, 12);
 
+    printf("ema value from QMI8658: ");
+    float r = 0.2;
+    for (size_t i = 0; i < 6; i++)
+    {
+        int16_t l = buf[i * 2];
+        int16_t h = buf[i * 2 + 1];
+        int16_t v = (h << 8) | l;
 
+        ema_values[i] = ema_values[i]*(1-r) + v*r;
+        printf("%6.2f ", ema_values[i]/81.92);
+    }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+    printf("\n");
+}
