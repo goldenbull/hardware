@@ -37,4 +37,8 @@ build/
 .idea/
 .vscode/
 vs-proj/
-/ESP32/dependencies.lock
+
+.DS_Store
+
+dependencies.lock
+managed_components/
