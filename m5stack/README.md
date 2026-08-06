@@ -1,30 +1,43 @@
 # M5Stack Basic 时钟与温湿度显示
 
-适用于 M5Stack Basic Core v2.7 + Base BTC（SHT30）。工程使用 ESP-IDF、C++ 和 CMake。
+适用于 M5Stack Basic Core v2.7 + Base BTC（SHT30）。工程使用 PlatformIO、Arduino 和 M5Unified。
 
 ## 准备环境
 
-安装 ESP-IDF 5.1 或更新版本并进入其命令行环境。首次配置/构建时，ESP-IDF Component Manager 会自动下载 Arduino-ESP32 与 M5Unified 依赖。
+在 VS Code 中安装 `PlatformIO IDE` 扩展，然后用 VS Code 打开本目录。PlatformIO 会根据 `platformio.ini` 自动安装固定版本的 ESP32 平台和 M5Unified。
 
-## 配置和编译
+## 配置
 
-Wi-Fi SSID、密码、NTP 地址均通过 CMake 缓存参数传入：
+本地 Wi-Fi 配置位于 `include/secrets.h`，该文件已被 Git 忽略。新环境可复制 `include/secrets.example.h` 并填写：
 
-```bash
-idf.py set-target esp32
-idf.py -DWIFI_SSID="你的SSID" \
-       -DWIFI_PASSWORD="你的密码" \
-       -DNTP_SERVER="ntp.aliyun.com" \
-       -DTIMEZONE="CST-8" \
-       build
+```cpp
+#define APP_WIFI_SSID "your-ssid"
+#define APP_WIFI_PASSWORD "your-password"
 ```
 
-烧录并查看日志（请按实际串口修改）：
+SHT30 默认关闭，因此未连接传感器时不会访问 I2C 或重复输出错误。连接 Base BTC 后，在 `include/secrets.h` 中增加：
 
-```bash
-idf.py -p /dev/ttyUSB0 flash monitor
+```cpp
+#define APP_ENABLE_SHT30 1
 ```
 
-程序启动后连接 Wi-Fi 并等待 NTP 校时，SNTP 每小时重新同步一次。正面最左侧 Button A 切换屏幕背光；屏幕关闭时，校时和温湿度采集仍会继续。温度高于 30°C 时屏幕底部显示火焰动画，低于 20°C 时屏幕顶部显示飘落雪花动画；温度恰好等于阈值时不显示动画。
+NTP 服务器和时区可在同一文件中覆盖：
 
-> CMake 参数会写入构建产物。若固件需要公开发布，请不要在其中放入真实 Wi-Fi 密码。
+```cpp
+#define APP_NTP_SERVER "ntp.aliyun.com"
+#define APP_TIMEZONE "CST-8"
+```
+
+## 编译和烧录
+
+使用 VS Code 底部 PlatformIO 工具栏的 Build、Upload 和 Serial Monitor 按钮。也可使用 PlatformIO CLI：
+
+```bash
+pio run
+pio run --target upload
+pio device monitor
+```
+
+串口已在 `platformio.ini` 中配置为 `/dev/cu.usbserial-01DB74DA`。如果设备端口变化，请同时修改 `upload_port` 和 `monitor_port`。
+
+程序连接 Wi-Fi 后通过 NTP 校时，并每小时重新同步。正面最左侧 Button A 切换屏幕背光。连接 SHT30 后，温度高于 30°C 时显示火焰动画，低于 20°C 时显示雪花动画。

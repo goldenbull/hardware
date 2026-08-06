@@ -1,5 +1,5 @@
-#include <M5Unified.h>
 #include <Arduino.h>
+#include <M5Unified.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <esp_sntp.h>
@@ -9,24 +9,14 @@
 #include <cstdio>
 #include <cstdlib>
 
-#ifndef APP_WIFI_SSID
-#define APP_WIFI_SSID ""
-#endif
-#ifndef APP_WIFI_PASSWORD
-#define APP_WIFI_PASSWORD ""
-#endif
-#ifndef APP_NTP_SERVER
-#define APP_NTP_SERVER "pool.ntp.org"
-#endif
-#ifndef APP_TIMEZONE
-#define APP_TIMEZONE "CST-8"
-#endif
+#include "app_config.h"
 
 namespace {
 constexpr uint8_t kSht30Address = 0x44;
 constexpr uint32_t kSensorIntervalMs = 2000;
 constexpr uint32_t kNtpSyncIntervalMs = 60U * 60U * 1000U;
 constexpr uint32_t kAnimationIntervalMs = 50;
+constexpr uint32_t kWifiTimeoutMs = 20000;
 
 bool screen_on = true;
 bool display_ok = false;
@@ -37,6 +27,7 @@ uint32_t last_sensor_read = 0;
 uint32_t last_frame_draw = 0;
 uint32_t animation_frame = 0;
 
+#if APP_ENABLE_SHT30
 uint8_t crc8(const uint8_t* data, size_t size) {
   uint8_t crc = 0xFF;
   for (size_t i = 0; i < size; ++i) {
@@ -51,7 +42,7 @@ uint8_t crc8(const uint8_t* data, size_t size) {
 
 bool readSht30(float& temp, float& rh) {
   Wire.beginTransmission(kSht30Address);
-  Wire.write(0x2C);  // High repeatability, clock stretching enabled.
+  Wire.write(0x2C);
   Wire.write(0x06);
   if (Wire.endTransmission() != 0) return false;
   delay(20);
@@ -67,46 +58,63 @@ bool readSht30(float& temp, float& rh) {
   rh = 100.0f * raw_rh / 65535.0f;
   return true;
 }
+#endif
 
-void connectWifi() {
-  if (display_ok) {
-    M5.Display.setTextDatum(middle_center);
-    M5.Display.setFont(&fonts::efontCN_24);
-    M5.Display.drawString("正在连接 Wi-Fi...", 160, 100);
-  }
+void showStatus(const char* line1, const char* line2 = nullptr) {
+  if (!display_ok) return;
+
+  M5.Display.fillScreen(TFT_BLACK);
+  M5.Display.setTextDatum(middle_center);
+  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  M5.Display.setFont(&fonts::efontCN_24);
+  M5.Display.drawString(line1, 160, line2 ? 100 : 120);
+  if (line2) M5.Display.drawString(line2, 160, 140);
+}
+
+bool connectWifi() {
   if (APP_WIFI_SSID[0] == '\0') {
-    if (display_ok) M5.Display.drawString("未设置 WIFI_SSID", 160, 140);
-    return;
+    showStatus("未设置 Wi-Fi");
+    Serial.println("Wi-Fi credentials are not configured");
+    return false;
   }
 
+  showStatus("正在连接 Wi-Fi...");
+  Serial.printf("Connecting to Wi-Fi SSID: %s\n", APP_WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(APP_WIFI_SSID, APP_WIFI_PASSWORD);
+
   const uint32_t started = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - started < 20000) {
+  while (WiFi.status() != WL_CONNECTED && millis() - started < kWifiTimeoutMs) {
+    M5.update();
     delay(250);
   }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    showStatus("Wi-Fi 连接失败");
+    Serial.printf("Wi-Fi connection failed, status=%d\n", WiFi.status());
+    return false;
+  }
+
+  Serial.print("Wi-Fi connected, IP: ");
+  Serial.println(WiFi.localIP());
+  return true;
 }
 
 void startClockSync() {
+  showStatus("正在校准时间...");
   setenv("TZ", APP_TIMEZONE, 1);
   tzset();
   esp_sntp_set_sync_interval(kNtpSyncIntervalMs);
   configTzTime(APP_TIMEZONE, APP_NTP_SERVER);
 
-  if (display_ok) {
-    M5.Display.fillScreen(TFT_BLACK);
-    M5.Display.setFont(&fonts::efontCN_24);
-    M5.Display.drawCenterString("正在校准时间...", 160, 105);
-  }
   tm now{};
   for (int attempt = 0; attempt < 30 && !getLocalTime(&now, 1000); ++attempt) {
-    delay(10);
+    M5.update();
   }
 }
 
 void drawSnow(uint32_t frame) {
-  // Each flake has a stable horizontal position and a slightly different speed.
   for (int i = 0; i < 14; ++i) {
     const int x = (i * 47 + 19) % 320;
     const int speed = 1 + i % 3;
@@ -147,7 +155,8 @@ void drawScreen(const tm& now) {
   char clock[16];
   snprintf(date, sizeof(date), "%04d-%02d-%02d  %s", now.tm_year + 1900,
            now.tm_mon + 1, now.tm_mday, weekdays[now.tm_wday]);
-  snprintf(clock, sizeof(clock), "%02d:%02d:%02d", now.tm_hour, now.tm_min, now.tm_sec);
+  snprintf(clock, sizeof(clock), "%02d:%02d:%02d", now.tm_hour, now.tm_min,
+           now.tm_sec);
 
   M5.Display.startWrite();
   M5.Display.fillScreen(TFT_BLACK);
@@ -166,7 +175,8 @@ void drawScreen(const tm& now) {
   M5.Display.setFont(&fonts::efontCN_24);
   char environment[64];
   if (sensor_ok) {
-    snprintf(environment, sizeof(environment), "温度 %.1f°C    湿度 %.1f%%", temperature, humidity);
+    snprintf(environment, sizeof(environment), "温度 %.1f°C    湿度 %.1f%%",
+             temperature, humidity);
   } else {
     snprintf(environment, sizeof(environment), "温湿度传感器不可用");
   }
@@ -175,55 +185,47 @@ void drawScreen(const tm& now) {
 }
 }  // namespace
 
-extern "C" void app_main() {
-  printf("%ld: ====== started ======\n", millis());
+void setup() {
+  Serial.begin(115200);
+  Serial.println("M5Stack clock starting");
 
-  initArduino();
   auto config = M5.config();
   config.clear_display = true;
-  config.fallback_board = m5::board_t::board_M5Stack;
   M5.begin(config);
-  display_ok = M5.Display.getBoard() != m5gfx::board_t::board_unknown &&
-               M5.getDisplayCount() != 0;
-  printf("Display initialization: %s (board=%d, count=%u)\n",
-         display_ok ? "OK" : "FAILED", static_cast<int>(M5.Display.getBoard()),
-         static_cast<unsigned>(M5.getDisplayCount()));
-  //Wire.begin(21, 22);
+  display_ok = M5.getDisplayCount() != 0;
+  Serial.printf("Display initialization: %s (board=%d, count=%u)\n",
+                display_ok ? "OK" : "FAILED", static_cast<int>(M5.getBoard()),
+                static_cast<unsigned>(M5.getDisplayCount()));
 
-  printf("%ld: ====== WiFi connecting ======\n", millis());
-  printf("WiFi SSID: %s\n", APP_WIFI_SSID);
-  connectWifi();
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    printf("%ld: ====== WiFi connected ======\n", millis());
-    startClockSync();
+#if APP_ENABLE_SHT30
+  Wire.begin(21, 22);
+#endif
+
+  if (connectWifi()) startClockSync();
+}
+
+void loop() {
+  M5.update();
+  if (M5.BtnA.wasPressed()) {
+    screen_on = !screen_on;
+    if (display_ok) M5.Display.setBrightness(screen_on ? 128 : 0);
+    if (screen_on) last_frame_draw = 0;
   }
-  else
-  {
-    printf("%ld: ====== WiFi failed ======\n", millis());
+
+  const uint32_t now_ms = millis();
+#if APP_ENABLE_SHT30
+  if (now_ms - last_sensor_read >= kSensorIntervalMs || last_sensor_read == 0) {
+    last_sensor_read = now_ms;
+    sensor_ok = readSht30(temperature, humidity);
   }
+#endif
 
-  while (true) {
-    M5.update();
-    if (M5.BtnA.wasPressed()) {
-      screen_on = !screen_on;
-      if (display_ok) M5.Display.setBrightness(screen_on ? 128 : 0);
-      if (screen_on) last_frame_draw = 0;
-    }
-
-    const uint32_t now_ms = millis();
-    // if (now_ms - last_sensor_read >= kSensorIntervalMs || last_sensor_read == 0) {
-    //   last_sensor_read = now_ms;
-    //   sensor_ok = readSht30(temperature, humidity);
-    // }
-
-    tm now{};
-    if (display_ok && screen_on && now_ms - last_frame_draw >= kAnimationIntervalMs &&
-        getLocalTime(&now, 10)) {
-      last_frame_draw = now_ms;
-      ++animation_frame;
-      drawScreen(now);
-    }
-    delay(10);
+  tm now{};
+  if (display_ok && screen_on && now_ms - last_frame_draw >= kAnimationIntervalMs &&
+      getLocalTime(&now, 10)) {
+    last_frame_draw = now_ms;
+    ++animation_frame;
+    drawScreen(now);
   }
+  delay(10);
 }
