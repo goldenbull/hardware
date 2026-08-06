@@ -15,11 +15,7 @@
 #define APP_WIFI_PASSWORD "your-password"
 ```
 
-SHT30 默认关闭，因此未连接传感器时不会访问 I2C 或重复输出错误。连接 Base BTC 后，在 `include/secrets.h` 中增加：
-
-```cpp
-#define APP_ENABLE_SHT30 1
-```
+程序启动时会自动检测 I2C 地址 `0x44` 上的 SHT30。传感器未连接时，程序每五秒低频重试；运行中连接或断开传感器均不需要重新编译或重启。
 
 NTP 服务器和时区可在同一文件中覆盖：
 

@@ -14,20 +14,27 @@
 namespace {
 constexpr uint8_t kSht30Address = 0x44;
 constexpr uint32_t kSensorIntervalMs = 2000;
+constexpr uint32_t kSensorProbeIntervalMs = 5000;
 constexpr uint32_t kNtpSyncIntervalMs = 60U * 60U * 1000U;
 constexpr uint32_t kAnimationIntervalMs = 50;
 constexpr uint32_t kWifiTimeoutMs = 20000;
 
 bool screen_on = true;
 bool display_ok = false;
+M5Canvas canvas(&M5.Display);
+bool sensor_present = false;
 bool sensor_ok = false;
 float temperature = NAN;
 float humidity = NAN;
 uint32_t last_sensor_read = 0;
-uint32_t last_frame_draw = 0;
+uint32_t last_sensor_probe = 0;
+uint32_t last_animation_draw = 0;
 uint32_t animation_frame = 0;
+int last_drawn_second = -1;
+int last_animation_mode = 0;
+bool force_redraw = true;
+bool environment_dirty = true;
 
-#if APP_ENABLE_SHT30
 uint8_t crc8(const uint8_t* data, size_t size) {
   uint8_t crc = 0xFF;
   for (size_t i = 0; i < size; ++i) {
@@ -38,6 +45,11 @@ uint8_t crc8(const uint8_t* data, size_t size) {
     }
   }
   return crc;
+}
+
+bool detectSht30() {
+  Wire.beginTransmission(kSht30Address);
+  return Wire.endTransmission() == 0;
 }
 
 bool readSht30(float& temp, float& rh) {
@@ -58,17 +70,17 @@ bool readSht30(float& temp, float& rh) {
   rh = 100.0f * raw_rh / 65535.0f;
   return true;
 }
-#endif
 
 void showStatus(const char* line1, const char* line2 = nullptr) {
   if (!display_ok) return;
 
-  M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextDatum(middle_center);
-  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5.Display.setFont(&fonts::efontCN_24);
-  M5.Display.drawString(line1, 160, line2 ? 100 : 120);
-  if (line2) M5.Display.drawString(line2, 160, 140);
+  canvas.fillScreen(TFT_BLACK);
+  canvas.setTextDatum(middle_center);
+  canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+  canvas.setFont(&fonts::efontCN_24);
+  canvas.drawString(line1, 160, line2 ? 100 : 120);
+  if (line2) canvas.drawString(line2, 160, 140);
+  canvas.pushSprite(0, 0);
 }
 
 bool connectWifi() {
@@ -120,11 +132,11 @@ void drawSnow(uint32_t frame) {
     const int speed = 1 + i % 3;
     const int y = (static_cast<int>(frame) * speed + i * 17) % 48;
     const int radius = 1 + i % 2;
-    M5.Display.drawLine(x - radius, y, x + radius, y, TFT_WHITE);
-    M5.Display.drawLine(x, y - radius, x, y + radius, TFT_WHITE);
+    canvas.drawLine(x - radius, y, x + radius, y, TFT_WHITE);
+    canvas.drawLine(x, y - radius, x, y + radius, TFT_WHITE);
     if (radius == 2) {
-      M5.Display.drawPixel(x - 1, y - 1, TFT_CYAN);
-      M5.Display.drawPixel(x + 1, y + 1, TFT_CYAN);
+      canvas.drawPixel(x - 1, y - 1, TFT_CYAN);
+      canvas.drawPixel(x + 1, y + 1, TFT_CYAN);
     }
   }
 }
@@ -135,20 +147,27 @@ void drawFire(uint32_t frame) {
   for (int i = 0; i < kFlameCount; ++i) {
     const int center_x = i * 26 - 4;
     const float wave = sinf(frame * 0.28f + i * 1.37f);
-    const int outer_height = 20 + (i * 7) % 14 + static_cast<int>(wave * 5);
+    const int outer_height = 16 + (i * 7) % 10 + static_cast<int>(wave * 4);
     const int inner_height = outer_height * 2 / 3;
 
-    M5.Display.fillTriangle(center_x - 16, kBottom, center_x + 16, kBottom,
-                            center_x + static_cast<int>(wave * 5),
-                            kBottom - outer_height, TFT_RED);
-    M5.Display.fillTriangle(center_x - 10, kBottom, center_x + 10, kBottom,
-                            center_x - static_cast<int>(wave * 3),
-                            kBottom - inner_height, TFT_ORANGE);
-    M5.Display.fillCircle(center_x, kBottom - 4, 6, TFT_YELLOW);
+    canvas.fillTriangle(center_x - 16, kBottom, center_x + 16, kBottom,
+                        center_x + static_cast<int>(wave * 5),
+                        kBottom - outer_height, TFT_RED);
+    canvas.fillTriangle(center_x - 10, kBottom, center_x + 10, kBottom,
+                        center_x - static_cast<int>(wave * 3),
+                        kBottom - inner_height, TFT_ORANGE);
+    canvas.fillCircle(center_x, kBottom - 4, 6, TFT_YELLOW);
   }
 }
 
-void drawScreen(const tm& now) {
+int getAnimationMode() {
+  if (!sensor_ok) return 0;
+  if (temperature < 20.0f) return -1;
+  if (temperature > 30.0f) return 1;
+  return 0;
+}
+
+void drawScreen(const tm& now, int animation_mode) {
   static const char* const weekdays[] = {
       "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"};
   char date[32];
@@ -158,21 +177,21 @@ void drawScreen(const tm& now) {
   snprintf(clock, sizeof(clock), "%02d:%02d:%02d", now.tm_hour, now.tm_min,
            now.tm_sec);
 
-  M5.Display.startWrite();
-  M5.Display.fillScreen(TFT_BLACK);
-  if (sensor_ok && temperature < 20.0f) drawSnow(animation_frame);
-  if (sensor_ok && temperature > 30.0f) drawFire(animation_frame);
+  canvas.fillScreen(TFT_BLACK);
+  if (animation_mode < 0) {
+    drawSnow(animation_frame);
+  } else if (animation_mode > 0) {
+    drawFire(animation_frame);
+  }
 
-  M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
-  M5.Display.setFont(&fonts::efontCN_24);
-  M5.Display.drawCenterString(date, 160, 48);
+  canvas.setTextColor(TFT_CYAN, TFT_BLACK);
+  canvas.setFont(&fonts::efontCN_24);
+  canvas.drawCenterString(date, 160, 48);
 
-  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5.Display.setFont(&fonts::Font7);
-  M5.Display.drawCenterString(clock, 160, 86);
+  canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+  canvas.setFont(&fonts::Font7);
+  canvas.drawCenterString(clock, 160, 86);
 
-  M5.Display.setTextColor(sensor_ok ? TFT_GREEN : TFT_ORANGE, TFT_BLACK);
-  M5.Display.setFont(&fonts::efontCN_24);
   char environment[64];
   if (sensor_ok) {
     snprintf(environment, sizeof(environment), "温度 %.1f°C    湿度 %.1f%%",
@@ -180,8 +199,15 @@ void drawScreen(const tm& now) {
   } else {
     snprintf(environment, sizeof(environment), "温湿度传感器不可用");
   }
-  M5.Display.drawCenterString(environment, 160, 180);
-  M5.Display.endWrite();
+  canvas.setTextColor(sensor_ok ? TFT_GREEN : TFT_ORANGE, TFT_BLACK);
+  canvas.setFont(&fonts::efontCN_24);
+  canvas.drawCenterString(environment, 160, 180);
+
+  canvas.pushSprite(0, 0);
+  last_drawn_second = now.tm_sec;
+  last_animation_mode = animation_mode;
+  environment_dirty = false;
+  force_redraw = false;
 }
 }  // namespace
 
@@ -193,13 +219,18 @@ void setup() {
   config.clear_display = true;
   M5.begin(config);
   display_ok = M5.getDisplayCount() != 0;
+  if (display_ok) {
+    canvas.setColorDepth(8);
+    display_ok = canvas.createSprite(320, 240) != nullptr;
+  }
   Serial.printf("Display initialization: %s (board=%d, count=%u)\n",
                 display_ok ? "OK" : "FAILED", static_cast<int>(M5.getBoard()),
                 static_cast<unsigned>(M5.getDisplayCount()));
 
-#if APP_ENABLE_SHT30
   Wire.begin(21, 22);
-#endif
+  sensor_present = detectSht30();
+  last_sensor_probe = millis();
+  Serial.printf("SHT30 sensor: %s\n", sensor_present ? "detected" : "not detected");
 
   if (connectWifi()) startClockSync();
 }
@@ -209,23 +240,50 @@ void loop() {
   if (M5.BtnA.wasPressed()) {
     screen_on = !screen_on;
     if (display_ok) M5.Display.setBrightness(screen_on ? 128 : 0);
-    if (screen_on) last_frame_draw = 0;
+    if (screen_on) force_redraw = true;
   }
 
   const uint32_t now_ms = millis();
-#if APP_ENABLE_SHT30
-  if (now_ms - last_sensor_read >= kSensorIntervalMs || last_sensor_read == 0) {
-    last_sensor_read = now_ms;
-    sensor_ok = readSht30(temperature, humidity);
+  if (!sensor_present && now_ms - last_sensor_probe >= kSensorProbeIntervalMs) {
+    last_sensor_probe = now_ms;
+    sensor_present = detectSht30();
+    if (sensor_present) {
+      Serial.println("SHT30 sensor connected");
+      last_sensor_read = 0;
+    }
   }
-#endif
+
+  if (sensor_present &&
+      (now_ms - last_sensor_read >= kSensorIntervalMs || last_sensor_read == 0)) {
+    last_sensor_read = now_ms;
+    if (!readSht30(temperature, humidity)) {
+      sensor_present = false;
+      sensor_ok = false;
+      temperature = NAN;
+      humidity = NAN;
+      last_sensor_probe = now_ms;
+      Serial.println("SHT30 sensor disconnected");
+    } else {
+      sensor_ok = true;
+    }
+    environment_dirty = true;
+  }
 
   tm now{};
-  if (display_ok && screen_on && now_ms - last_frame_draw >= kAnimationIntervalMs &&
-      getLocalTime(&now, 10)) {
-    last_frame_draw = now_ms;
-    ++animation_frame;
-    drawScreen(now);
+  if (display_ok && screen_on && getLocalTime(&now, 10)) {
+    const int animation_mode = getAnimationMode();
+    const bool animation_due =
+        animation_mode != 0 && now_ms - last_animation_draw >= kAnimationIntervalMs;
+    const bool content_due = force_redraw || environment_dirty ||
+                             now.tm_sec != last_drawn_second ||
+                             animation_mode != last_animation_mode;
+    if (content_due || animation_due) {
+      if (animation_due) {
+        last_animation_draw = now_ms;
+        ++animation_frame;
+      }
+      drawScreen(now, animation_mode);
+    }
   }
   delay(10);
 }

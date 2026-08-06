@@ -19,7 +19,3 @@
 #ifndef APP_TIMEZONE
 #define APP_TIMEZONE "CST-8"
 #endif
-
-#ifndef APP_ENABLE_SHT30
-#define APP_ENABLE_SHT30 0
-#endif
