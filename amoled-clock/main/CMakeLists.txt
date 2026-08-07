@@ -1,0 +1,23 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "i2c_bus.c"
+        "display.c"
+        "touch.c"
+        "sht4x.c"
+        "net_time.c"
+        "ui.c"
+        "fonts/font_sc_16.c"
+        "fonts/font_sc_28.c"
+        "fonts/font_sc_48.c"
+    INCLUDE_DIRS "." "fonts"
+    REQUIRES
+        driver
+        esp_lcd
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_timer
+        nvs_flash
+        lwip
+)

@@ -1,0 +1,37 @@
+menu "AMOLED Clock 配置"
+
+    config APP_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "your-ssid"
+        help
+            要连接的 2.4GHz 无线网络名称。ESP32-S3 不支持 5GHz。
+
+    config APP_WIFI_PASSWORD
+        string "Wi-Fi 密码"
+        default "your-password"
+
+    config APP_WIFI_MAX_RETRY
+        int "Wi-Fi 连接失败后的重试次数"
+        default 8
+        help
+            达到次数后停止快速重试，改为每 30 秒重连一次。
+
+    config APP_NTP_SERVER
+        string "NTP 服务器"
+        default "ntp.aliyun.com"
+
+    config APP_TIMEZONE
+        string "时区（POSIX TZ 字符串）"
+        default "CST-8"
+        help
+            北京时间为 CST-8。注意 POSIX 的符号是反的，东八区写 -8。
+
+    config APP_TEMP_HOT_THRESHOLD
+        int "火焰动画触发温度（摄氏度）"
+        default 30
+
+    config APP_TEMP_COLD_THRESHOLD
+        int "雪花动画触发温度（摄氏度）"
+        default 20
+
+endmenu
