@@ -18,6 +18,7 @@ static const char *TAG = "touch";
 /* 手势判定阈值 */
 #define TAP_MAX_MOVE_PX    20     /* 位移超过这个数就不算单击 */
 #define TAP_MAX_MS         500    /* 按住超过这么久也不算单击 */
+#define DOUBLE_TAP_GAP_MS  400    /* 两次单击间隔小于它才算双击 */
 #define SWIPE_START_PX     32     /* 横向超过这个数才进入调亮度模式 */
 #define SWIPE_MAX_DY_PX    80     /* 竖向偏太多说明不是横滑 */
 /* 横向划过 400px ≈ 覆盖整个亮度范围 */
@@ -55,11 +56,11 @@ bool touch_read_point(uint16_t *x, uint16_t *y)
     return true;
 }
 
-static void handle_tap(void)
-{
-    display_set_on(!display_is_on());
-}
-
+/*
+ * 用双击切换开关屏，而不是单击。
+ * 单击的毛病是连点会让面板反复收到 0x28/0x29，跟不上就黑在那儿；双击这个动作
+ * 人做起来本来就会自觉留出间隔，两次切换之间天然隔着几百毫秒，面板跟得上。
+ */
 static void touch_task(void *arg)
 {
     bool     pressed        = false;
@@ -68,6 +69,7 @@ static void touch_task(void *arg)
     uint16_t last_x = 0, last_y = 0;
     int      max_move       = 0;
     int64_t  press_time_us  = 0;
+    int64_t  last_tap_us    = 0;       /* 上一次单击的时刻，用来配双击 */
     uint8_t  start_bright   = DISPLAY_BRIGHTNESS_DEFAULT;
 
     while (1) {
@@ -125,7 +127,13 @@ static void touch_task(void *arg)
                     s_cb.on_brightness_end();
                 }
             } else if (max_move <= TAP_MAX_MOVE_PX && held_ms <= TAP_MAX_MS) {
-                handle_tap();
+                const int64_t now_us = esp_timer_get_time();
+                if (last_tap_us != 0 && (now_us - last_tap_us) / 1000 <= DOUBLE_TAP_GAP_MS) {
+                    last_tap_us = 0;      /* 配对用掉，三连击不会再触发一次 */
+                    display_set_on(!display_is_on());
+                } else {
+                    last_tap_us = now_us;
+                }
             }
             swiping = false;
         }
@@ -149,6 +157,6 @@ esp_err_t touch_init(const touch_callbacks_t *callbacks)
     ESP_RETURN_ON_FALSE(xTaskCreate(touch_task, "touch", 3072, NULL, 3, NULL) == pdPASS,
                         ESP_ERR_NO_MEM, TAG, "创建触摸任务失败");
 
-    ESP_LOGI(TAG, "触摸就绪：单击开关屏，横滑调亮度");
+    ESP_LOGI(TAG, "触摸就绪：双击开关屏，横滑调亮度");
     return ESP_OK;
 }

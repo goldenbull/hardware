@@ -1,11 +1,13 @@
 version: "1.0.0"
 
 dependencies:
-  # SH8601 驱动要求 >5.0.4 且 != 5.1.1
-  idf: ">5.0.4,!=5.1.1"
+  # SH8601 2.x 要求 IDF >=5.3
+  idf: ">=5.3"
 
+  # 2.0.1 才会检查 tx_color() 的返回值；1.0.0 送屏失败也返回 ESP_OK，
+  # 导致 flush 回调永远不触发、LVGL 死在第一帧上。公开头文件与 1.0.0 完全一致。
   esp_lcd_sh8601:
-    version: "^1.0.0"
+    version: "^2.0.1"
     public: true
 
   lvgl/lvgl:

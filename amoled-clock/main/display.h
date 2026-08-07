@@ -1,9 +1,10 @@
 /*
  * SH8601 AMOLED + LVGL 显示层。
  *
- * 关键点：LVGL 配了两块整屏大小的绘制缓冲（放在 PSRAM）并打开 full_refresh，
- * 每一帧都是在内存里画完整屏后一次性 DMA 给屏幕，屏幕上不存在"先擦后画"的
- * 中间状态，所以不会闪。
+ * 关键点：LVGL 配了两块分块绘制缓冲，放在内部 DMA RAM 而不是 PSRAM。
+ * esp_lcd 的 SPI panel IO 不会给事务设置 SPI_TRANS_DMA_USE_PSRAM，PSRAM 里的
+ * 缓冲会逼着 spi_master 另外申请一块等长的内部临时缓冲，整屏尺寸下必然失败。
+ * 详见 display.c 里 LVGL_BUF_LINES 的注释。
  */
 #pragma once
 
@@ -11,8 +12,12 @@
 #include <stdint.h>
 #include "esp_err.h"
 
-/* AMOLED 没有背光，亮度是屏内寄存器 0x51，0 最暗、255 最亮 */
-#define DISPLAY_BRIGHTNESS_MIN     8
+/*
+ * AMOLED 没有背光，亮度是屏内寄存器 0x51，0 最暗、255 最亮。
+ * MIN 是"滑到最左"的下限，不是 0——最暗档也要看得见，
+ * 真正的全黑只留给关屏（display_set_on(false) 会单独写 0）。
+ */
+#define DISPLAY_BRIGHTNESS_MIN     60
 #define DISPLAY_BRIGHTNESS_MAX     255
 #define DISPLAY_BRIGHTNESS_DEFAULT 180
 

@@ -2,13 +2,13 @@ menu "AMOLED Clock 配置"
 
     config APP_WIFI_SSID
         string "Wi-Fi SSID"
-        default "your-ssid"
+        default "your ssid"
         help
             要连接的 2.4GHz 无线网络名称。ESP32-S3 不支持 5GHz。
 
     config APP_WIFI_PASSWORD
         string "Wi-Fi 密码"
-        default "your-password"
+        default "your password"
 
     config APP_WIFI_MAX_RETRY
         int "Wi-Fi 连接失败后的重试次数"

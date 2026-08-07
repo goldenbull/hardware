@@ -18,9 +18,9 @@ static const char *TAG = "ui";
 /* ---- 版面 ----------------------------------------------------------
  * 536 x 240，从上到下：
  *   0   .. 44   雪花动画带（冷的时候才显示）
- *   46  .. 80   日期 + 星期
- *   82  .. 138  大号时钟
- *   146 .. 180  温湿度
+ *   35  .. 72   日期 + 星期（字号 34，顶上 9px 压在雪花带上，标签背景透明，雪花从字后面飘过）
+ *   52  .. 89   日期（字号 34）+ 温湿度（字号 28），同一行，整体居中
+ *   100 .. 173  大号时钟（字号 96），独占一行
  *   184 .. 240  火焰动画带（热的时候才显示）
  * 右上角是网络状态，亮度浮层在正中间。
  */
@@ -28,7 +28,23 @@ static const char *TAG = "ui";
 #define FIRE_BAND_H   56
 #define FIRE_BAND_Y   (LCD_V_RES - FIRE_BAND_H)
 
-#define SNOW_FLAKES   22
+/*
+ * 版面留白：雪花带底 44 → 信息行 52..89 → 时钟 100..173 → 火焰带顶 184，
+ * 三处间隙 8/11/11，基本均分。
+ *
+ * 宽度（字模实测：96 号数字每字 48px，34 号半角 17px / 汉字 34px，
+ * 28 号半角 14px / 汉字 28px）：
+ *   时钟   "00:00:00"                        = 384，536 宽余 76px/边
+ *   信息行 "2026-08-07  周五" 272 + 20 + "-12.3°C  100%" 182 = 474，余 31px/边
+ */
+#define INFO_ROW_Y   52
+#define INFO_ROW_GAP 20
+#define CLOCK_Y      100
+
+/* 六角雪花画得大，片数就要少，否则 44px 高的带子里会糊成一片 */
+#define SNOW_FLAKES   7
+#define SNOW_R_MIN    5
+#define SNOW_R_MAX    8
 #define FIRE_TONGUES  13
 
 #define ANIM_PERIOD_MS       60
@@ -62,12 +78,15 @@ static uint32_t    s_anim_frame;
 
 static int s_last_second = -1;
 
-/* 雪花状态 */
+/* 雪花状态。x 是摆动的中心线，实际横坐标由 phase 正弦调制出来 */
 static struct {
     int16_t x;
     int16_t y;
     int8_t  speed;
     int8_t  radius;
+    uint8_t sway_amp;    /* 摆幅，像素 */
+    uint8_t sway_step;   /* 每帧相位推进，决定摆动快慢 */
+    uint8_t phase;       /* 0..255 对应 0..2π，溢出即自然回绕 */
 } s_flakes[SNOW_FLAKES];
 
 /* ------------------------------------------------------------------ */
@@ -76,10 +95,16 @@ static struct {
 
 static void snow_reset_flake(int i, bool from_top)
 {
+    const int r = SNOW_R_MIN + rand() % (SNOW_R_MAX - SNOW_R_MIN + 1);
+
     s_flakes[i].x = rand() % LCD_H_RES;
-    s_flakes[i].y = from_top ? -(rand() % 12) : (rand() % SNOW_BAND_H);
-    s_flakes[i].speed = 1 + rand() % 3;
-    s_flakes[i].radius = 1 + rand() % 2;
+    /* 从顶上重新飘下来时先整片藏在带子外面，免得凭空冒出来 */
+    s_flakes[i].y = from_top ? -(r + rand() % 12) : (rand() % SNOW_BAND_H);
+    s_flakes[i].speed = 1 + rand() % 2;
+    s_flakes[i].radius = r;
+    s_flakes[i].sway_amp = 4 + rand() % 7;
+    s_flakes[i].sway_step = 3 + rand() % 5;
+    s_flakes[i].phase = rand() % 256;
 }
 
 static void snow_set_px(int x, int y, lv_color_t color)
@@ -90,6 +115,37 @@ static void snow_set_px(int x, int y, lv_color_t color)
     lv_canvas_set_px_color(s_snow_canvas, x, y, color);
 }
 
+/* 六个主枝的方向，间隔 60°：cos/sin(0°,60°,...,300°) */
+static const float SNOW_DIR_X[6] = { 1.000f,  0.500f, -0.500f, -1.000f, -0.500f,  0.500f};
+static const float SNOW_DIR_Y[6] = { 0.000f,  0.866f,  0.866f,  0.000f, -0.866f, -0.866f};
+
+/* 从 (cx,cy) 沿单位向量画一条长 len 的枝 */
+static void snow_draw_ray(int cx, int cy, float dx, float dy, int len, lv_color_t color)
+{
+    for (int t = 1; t <= len; t++) {
+        snow_set_px(cx + (int)lroundf(dx * t), cy + (int)lroundf(dy * t), color);
+    }
+}
+
+/*
+ * 一片六角雪花：6 条主枝，每条主枝在 60% 处朝 ±60° 各分出一根小枝。
+ * 小枝方向正好和相邻主枝同向，所以直接复用方向表。
+ */
+static void snow_draw_flake(int cx, int cy, int r, lv_color_t body, lv_color_t branch)
+{
+    snow_set_px(cx, cy, body);
+
+    for (int a = 0; a < 6; a++) {
+        snow_draw_ray(cx, cy, SNOW_DIR_X[a], SNOW_DIR_Y[a], r, body);
+
+        const int bx = cx + (int)lroundf(SNOW_DIR_X[a] * r * 0.6f);
+        const int by = cy + (int)lroundf(SNOW_DIR_Y[a] * r * 0.6f);
+        const int blen = r / 3 + 1;
+        snow_draw_ray(bx, by, SNOW_DIR_X[(a + 1) % 6], SNOW_DIR_Y[(a + 1) % 6], blen, branch);
+        snow_draw_ray(bx, by, SNOW_DIR_X[(a + 5) % 6], SNOW_DIR_Y[(a + 5) % 6], blen, branch);
+    }
+}
+
 static void draw_snow(void)
 {
     const lv_color_t white = lv_color_hex(0xFFFFFF);
@@ -98,35 +154,25 @@ static void draw_snow(void)
     lv_canvas_fill_bg(s_snow_canvas, lv_color_black(), LV_OPA_COVER);
 
     for (int i = 0; i < SNOW_FLAKES; i++) {
-        s_flakes[i].y += s_flakes[i].speed;
-        /* 左右各飘一点，看起来不像下雨 */
-        if ((s_anim_frame + i) % 8 == 0) {
-            s_flakes[i].x += (i % 2) ? 1 : -1;
-            if (s_flakes[i].x < 0) {
-                s_flakes[i].x = LCD_H_RES - 1;
-            } else if (s_flakes[i].x >= LCD_H_RES) {
-                s_flakes[i].x = 0;
-            }
-        }
-        if (s_flakes[i].y >= SNOW_BAND_H) {
-            snow_reset_flake(i, true);
-        }
-
-        const int x = s_flakes[i].x;
-        const int y = s_flakes[i].y;
         const int r = s_flakes[i].radius;
 
-        /* 十字形的一片雪 */
-        for (int d = -r; d <= r; d++) {
-            snow_set_px(x + d, y, white);
-            snow_set_px(x, y + d, white);
+        s_flakes[i].y += s_flakes[i].speed;
+        s_flakes[i].phase += s_flakes[i].sway_step;
+
+        /* 整片都掉出带子下沿了才回收 */
+        if (s_flakes[i].y - r >= SNOW_BAND_H) {
+            snow_reset_flake(i, true);
+            continue;
         }
-        if (r == 2) {
-            snow_set_px(x - 1, y - 1, cyan);
-            snow_set_px(x + 1, y + 1, cyan);
-            snow_set_px(x - 1, y + 1, cyan);
-            snow_set_px(x + 1, y - 1, cyan);
-        }
+
+        /*
+         * 横向按正弦摆，配上匀速下落就是一条来回飘的曲线，
+         * 而不是原来那种每 8 帧硬拐一格的折线。
+         */
+        const float rad = s_flakes[i].phase * (6.2831853f / 256.0f);
+        const int   x   = s_flakes[i].x + (int)lroundf(s_flakes[i].sway_amp * sinf(rad));
+
+        snow_draw_flake(x, s_flakes[i].y, r, white, cyan);
     }
 
     lv_obj_invalidate(s_snow_canvas);
@@ -242,7 +288,7 @@ static void clock_timer_cb(lv_timer_t *timer)
     static const char *const weekdays[] = {"日", "一", "二", "三", "四", "五", "六"};
 
     char buf[48];
-    snprintf(buf, sizeof(buf), "%04d-%02d-%02d  周%s",
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d 周%s",
              local.tm_year + 1900, local.tm_mon + 1, local.tm_mday, weekdays[local.tm_wday]);
     lv_label_set_text(s_date_label, buf);
 
@@ -304,7 +350,7 @@ void ui_set_environment(bool ok, float temperature_c, float humidity_rh)
 
     if (ok) {
         char buf[64];
-        snprintf(buf, sizeof(buf), "温度 %.1f°C   湿度 %.0f%%", temperature_c, humidity_rh);
+        snprintf(buf, sizeof(buf), "%.1f°C %.0f%%", temperature_c, humidity_rh);
         lv_label_set_text(s_env_label, buf);
         lv_obj_set_style_text_color(s_env_label, lv_color_hex(0x63E6A0), LV_PART_MAIN);
 
@@ -377,24 +423,36 @@ void ui_init(void)
     lv_obj_add_flag(s_fire_canvas, LV_OBJ_FLAG_HIDDEN);
 
     /* ---- 文字。画布先建，标签后建，这样标签压在动画之上 ---- */
-    s_date_label = lv_label_create(scr);
-    lv_obj_set_style_text_font(s_date_label, &font_sc_28, LV_PART_MAIN);
+    /*
+     * 日期 + 温湿度同一行。用 flex 容器而不是写死偏移：两边的文案宽度都是变的
+     * （温湿度有 "25.3°C  60%" / "-12.3°C  100%" / "传感器离线" 几种），
+     * 容器按内容收缩后再整体居中，换文案不用重新算坐标。
+     */
+    lv_obj_t *info_row = lv_obj_create(scr);
+    lv_obj_remove_style_all(info_row);                /* 去掉默认底色、边框、内边距 */
+    lv_obj_clear_flag(info_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(info_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(info_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(info_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(info_row, INFO_ROW_GAP, LV_PART_MAIN);
+    lv_obj_align(info_row, LV_ALIGN_TOP_MID, 0, INFO_ROW_Y);
+
+    s_date_label = lv_label_create(info_row);
+    lv_obj_set_style_text_font(s_date_label, &font_sc_34, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_date_label, lv_color_hex(0x59C7F0), LV_PART_MAIN);
     lv_label_set_text(s_date_label, "");
-    lv_obj_align(s_date_label, LV_ALIGN_TOP_MID, 0, 46);
 
-    /* 大号时钟的字模里只有数字和冒号，占位符也只能用这些字符 */
-    s_time_label = lv_label_create(scr);
-    lv_obj_set_style_text_font(s_time_label, &font_sc_48, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_time_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_label_set_text(s_time_label, "00:00:00");
-    lv_obj_align(s_time_label, LV_ALIGN_TOP_MID, 0, 82);
-
-    s_env_label = lv_label_create(scr);
+    s_env_label = lv_label_create(info_row);
     lv_obj_set_style_text_font(s_env_label, &font_sc_28, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_env_label, lv_color_hex(0xF0A030), LV_PART_MAIN);
     lv_label_set_text(s_env_label, "传感器离线");
-    lv_obj_align(s_env_label, LV_ALIGN_TOP_MID, 0, 146);
+
+    /* 时间独占一行。字模里只有数字和冒号，占位符也只能用这些字符 */
+    s_time_label = lv_label_create(scr);
+    lv_obj_set_style_text_font(s_time_label, &font_sc_96, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_time_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_label_set_text(s_time_label, "00:00:00");
+    lv_obj_align(s_time_label, LV_ALIGN_TOP_MID, 0, CLOCK_Y);
 
     s_status_label = lv_label_create(scr);
     lv_obj_set_style_text_font(s_status_label, &font_sc_16, LV_PART_MAIN);

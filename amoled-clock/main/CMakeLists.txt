@@ -9,7 +9,8 @@ idf_component_register(
         "ui.c"
         "fonts/font_sc_16.c"
         "fonts/font_sc_28.c"
-        "fonts/font_sc_48.c"
+        "fonts/font_sc_34.c"
+        "fonts/font_sc_96.c"
     INCLUDE_DIRS "." "fonts"
     REQUIRES
         driver

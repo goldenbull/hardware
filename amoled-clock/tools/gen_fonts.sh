@@ -24,9 +24,13 @@ npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 16 "${COMMON[@]}" \
 npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 28 "${COMMON[@]}" \
     -r 0x20-0x7E -r 0xB0 --symbols "$CJK" -o "$OUT/font_sc_28.c"
 
+# 日期行只有 "2026-08-07  周五"，汉字只用得到星期，不必带全套 CJK
+npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 34 "${COMMON[@]}" \
+    -r 0x20-0x7E --symbols "周一二三四五六日" -o "$OUT/font_sc_34.c"
+
 # 大号时钟只有 00:00:00，不需要别的字符
-npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 48 "${COMMON[@]}" \
-    --symbols "0123456789:" -o "$OUT/font_sc_48.c"
+npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 96 "${COMMON[@]}" \
+    --symbols "0123456789:" -o "$OUT/font_sc_96.c"
 
 echo "生成完成："
 ls -l "$OUT"
