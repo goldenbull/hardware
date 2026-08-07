@@ -42,3 +42,5 @@ vs-proj/
 
 dependencies.lock
 managed_components/
+
+.claude/
