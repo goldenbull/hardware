@@ -19,10 +19,10 @@ static const char *TAG = "touch";
 #define TAP_MAX_MOVE_PX    20     /* 位移超过这个数就不算单击 */
 #define TAP_MAX_MS         500    /* 按住超过这么久也不算单击 */
 #define DOUBLE_TAP_GAP_MS  400    /* 两次单击间隔小于它才算双击 */
-#define SWIPE_START_PX     32     /* 横向超过这个数才进入调亮度模式 */
-#define SWIPE_MAX_DY_PX    80     /* 竖向偏太多说明不是横滑 */
-/* 横向划过 400px ≈ 覆盖整个亮度范围 */
-#define SWIPE_FULL_RANGE_PX 400
+#define SWIPE_START_PX     28     /* 竖向超过这个数才进入调亮度模式 */
+#define SWIPE_MAX_DX_PX    60     /* 横向偏太多说明不是竖滑 */
+/* 竖向划过 180px ≈ 覆盖整个亮度范围（屏幕才 240 高，不能取太大） */
+#define SWIPE_FULL_RANGE_PX 180
 
 static touch_callbacks_t s_cb;
 
@@ -98,13 +98,14 @@ static void touch_task(void *arg)
             }
 
             /* 关屏状态下不接受滑动，避免摸黑乱调 */
-            if (!swiping && display_is_on() && abs(dx) >= SWIPE_START_PX && abs(dy) < SWIPE_MAX_DY_PX) {
+            if (!swiping && display_is_on() && abs(dy) >= SWIPE_START_PX && abs(dx) < SWIPE_MAX_DX_PX) {
                 swiping = true;
             }
 
             if (swiping) {
                 const int span = DISPLAY_BRIGHTNESS_MAX - DISPLAY_BRIGHTNESS_MIN;
-                int target = (int)start_bright + dx * span / SWIPE_FULL_RANGE_PX;
+                /* y 轴向下为正，所以往上滑（dy 为负）要变亮，这里用减号 */
+                int target = (int)start_bright - dy * span / SWIPE_FULL_RANGE_PX;
                 if (target < DISPLAY_BRIGHTNESS_MIN) {
                     target = DISPLAY_BRIGHTNESS_MIN;
                 } else if (target > DISPLAY_BRIGHTNESS_MAX) {
@@ -157,6 +158,6 @@ esp_err_t touch_init(const touch_callbacks_t *callbacks)
     ESP_RETURN_ON_FALSE(xTaskCreate(touch_task, "touch", 3072, NULL, 3, NULL) == pdPASS,
                         ESP_ERR_NO_MEM, TAG, "创建触摸任务失败");
 
-    ESP_LOGI(TAG, "触摸就绪：双击开关屏，横滑调亮度");
+    ESP_LOGI(TAG, "触摸就绪：双击开关屏，上下滑动调亮度");
     return ESP_OK;
 }

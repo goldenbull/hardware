@@ -18,11 +18,10 @@ static const char *TAG = "ui";
 /* ---- 版面 ----------------------------------------------------------
  * 536 x 240，从上到下：
  *   0   .. 44   雪花动画带（冷的时候才显示）
- *   35  .. 72   日期 + 星期（字号 34，顶上 9px 压在雪花带上，标签背景透明，雪花从字后面飘过）
  *   52  .. 89   日期（字号 34）+ 温湿度（字号 28），同一行，整体居中
  *   100 .. 173  大号时钟（字号 96），独占一行
  *   184 .. 240  火焰动画带（热的时候才显示）
- * 右上角是网络状态，亮度浮层在正中间。
+ * 右上角是网络状态，左侧竖条是调亮度时的指示条。
  */
 #define SNOW_BAND_H   44
 #define FIRE_BAND_H   56
@@ -40,6 +39,11 @@ static const char *TAG = "ui";
 #define INFO_ROW_Y   52
 #define INFO_ROW_GAP 20
 #define CLOCK_Y      100
+
+/* 亮度指示条：左侧竖条，垂直居中 */
+#define BRIGHT_BAR_W 10
+#define BRIGHT_BAR_H 120
+#define BRIGHT_BAR_X 14   /* 距左边缘 */
 
 /* 六角雪花画得大，片数就要少，否则 44px 高的带子里会糊成一片 */
 #define SNOW_FLAKES   7
@@ -67,9 +71,7 @@ static lv_obj_t   *s_fire_canvas;
 static lv_color_t *s_snow_buf;
 static lv_color_t *s_fire_buf;
 
-static lv_obj_t *s_bright_panel;
 static lv_obj_t *s_bright_bar;
-static lv_obj_t *s_bright_label;
 
 static lv_timer_t *s_bright_timer;
 
@@ -302,7 +304,7 @@ static void clock_timer_cb(lv_timer_t *timer)
 
 static void brightness_hide_cb(lv_timer_t *timer)
 {
-    lv_obj_add_flag(s_bright_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_bright_bar, LV_OBJ_FLAG_HIDDEN);
     lv_timer_pause(s_bright_timer);
 }
 
@@ -316,11 +318,7 @@ void ui_show_brightness(uint8_t brightness)
                         (DISPLAY_BRIGHTNESS_MAX - DISPLAY_BRIGHTNESS_MIN);
     lv_bar_set_value(s_bright_bar, percent, LV_ANIM_OFF);
 
-    char buf[24];
-    snprintf(buf, sizeof(buf), "亮度 %d%%", percent);
-    lv_label_set_text(s_bright_label, buf);
-
-    lv_obj_clear_flag(s_bright_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s_bright_bar, LV_OBJ_FLAG_HIDDEN);
     lv_timer_reset(s_bright_timer);
     lv_timer_resume(s_bright_timer);
 
@@ -460,30 +458,22 @@ void ui_init(void)
     lv_label_set_text(s_status_label, "连接中");
     lv_obj_align(s_status_label, LV_ALIGN_TOP_RIGHT, -12, 8);
 
-    /* ---- 亮度浮层 ---- */
-    s_bright_panel = lv_obj_create(scr);
-    lv_obj_set_size(s_bright_panel, 340, 68);
-    lv_obj_align(s_bright_panel, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(s_bright_panel, lv_color_hex(0x1A1F26), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_bright_panel, LV_OPA_90, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s_bright_panel, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_bright_panel, 12, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(s_bright_panel, 16, LV_PART_MAIN);
-    lv_obj_clear_flag(s_bright_panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(s_bright_panel, LV_OBJ_FLAG_HIDDEN);
-
-    s_bright_bar = lv_bar_create(s_bright_panel);
-    lv_obj_set_size(s_bright_bar, 160, 14);
-    lv_obj_align(s_bright_bar, LV_ALIGN_LEFT_MID, 0, 0);
+    /*
+     * ---- 亮度指示条 ----
+     * 左侧一根竖条，没有面板底和文字。lv_bar 的方向由宽高比决定：高 > 宽
+     * 就是竖向，填充从下往上长，和"往上滑变亮"的手势方向一致。
+     * 高 120 居中落在 60..180，上不碰雪花带（0..44）、下不碰火焰带（184..）。
+     */
+    s_bright_bar = lv_bar_create(scr);
+    lv_obj_set_size(s_bright_bar, BRIGHT_BAR_W, BRIGHT_BAR_H);
+    lv_obj_align(s_bright_bar, LV_ALIGN_LEFT_MID, BRIGHT_BAR_X, 0);
     lv_bar_set_range(s_bright_bar, 0, 100);
+    lv_obj_set_style_radius(s_bright_bar, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_bright_bar, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(s_bright_bar, lv_color_hex(0x39424D), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_bright_bar, LV_OPA_70, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_bright_bar, lv_color_hex(0xF8D848), LV_PART_INDICATOR);
-
-    s_bright_label = lv_label_create(s_bright_panel);
-    lv_obj_set_style_text_font(s_bright_label, &font_sc_28, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_bright_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_label_set_text(s_bright_label, "亮度 100%");
-    lv_obj_align(s_bright_label, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_add_flag(s_bright_bar, LV_OBJ_FLAG_HIDDEN);
 
     /* ---- 定时器 ---- */
     lv_timer_create(clock_timer_cb, CLOCK_PERIOD_MS, NULL);
