@@ -73,6 +73,7 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
+    sht4x_power_on();   /* 必须排在 i2c_bus_init 之前，原因见 sht4x.h */
     ESP_ERROR_CHECK(i2c_bus_init());
     ESP_ERROR_CHECK(display_init());
     ui_init();

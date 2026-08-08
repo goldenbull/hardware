@@ -3,6 +3,7 @@
 #include <inttypes.h>
 
 #include "board_pins.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,6 +17,22 @@ static const char *TAG = "sht4x";
 
 /* 高精度测量典型 6.9ms、最大 8.2ms，留点余量 */
 #define SHT4X_MEASURE_DELAY_MS 12
+
+/* 供电拉高后等芯片起来，数据手册的上电时间是 1ms，给足余量 */
+#define SHT4X_POWER_UP_MS 10
+
+void sht4x_power_on(void)
+{
+    const gpio_config_t cfg = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = 1ULL << PIN_NUM_SHT4X_PWR,
+    };
+    ESP_ERROR_CHECK(gpio_config(&cfg));
+    gpio_set_level(PIN_NUM_SHT4X_PWR, 1);
+    vTaskDelay(pdMS_TO_TICKS(SHT4X_POWER_UP_MS));
+
+    ESP_LOGI(TAG, "SHT4x 供电已开（GPIO%d）", PIN_NUM_SHT4X_PWR);
+}
 
 /* CRC-8，多项式 0x31，初值 0xFF —— 数据手册规定 */
 static uint8_t sht4x_crc8(const uint8_t *data, size_t len)
