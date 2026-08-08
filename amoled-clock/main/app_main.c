@@ -18,6 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
+#include "imu.h"
 #include "net_time.h"
 #include "nvs_flash.h"
 #include "sht4x.h"
@@ -86,7 +87,12 @@ void app_main(void)
     };
     /* 不带触摸的板子在这里会失败，让它继续跑，时钟照样能用 */
     if (touch_init(&touch_cb) != ESP_OK) {
-        ESP_LOGW(TAG, "触摸不可用，单击开关屏和滑动调亮度将失效");
+        ESP_LOGW(TAG, "触摸不可用，双击开关屏和滑动调亮度将失效");
+    }
+
+    /* IMU 不在也不影响看时间，只是不会自动翻转 */
+    if (imu_init(display_set_flipped) != ESP_OK) {
+        ESP_LOGW(TAG, "IMU 不可用，屏幕方向将固定不变");
     }
 
     ESP_ERROR_CHECK(net_time_start());

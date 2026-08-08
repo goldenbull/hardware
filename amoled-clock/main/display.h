@@ -34,4 +34,11 @@ void display_set_brightness(uint8_t brightness);
 uint8_t display_get_brightness(void);
 
 void display_set_on(bool on);
+
+/*
+ * 屏幕整体转 180°，靠改面板的 MADCTL 实现，不走 LVGL 软件旋转，没有额外开销。
+ * 触摸坐标不会自动跟着转，touch.c 需要自己查 display_is_flipped() 做换算。
+ */
+void display_set_flipped(bool flipped);
+bool display_is_flipped(void);
 bool display_is_on(void);

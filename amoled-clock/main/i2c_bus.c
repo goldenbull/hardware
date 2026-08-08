@@ -11,7 +11,7 @@ static const char *TAG = "i2c_bus";
 
 #define I2C_TIMEOUT_MS 100
 
-/* 这条总线上的器件：FT3168 触摸、SHT45，留两个余量给 IMU 之类 */
+/* 这条总线上的器件：FT3168 触摸、QMI8658 IMU、SHT45，留一个余量 */
 #define I2C_MAX_DEVICES 4
 
 static i2c_master_bus_handle_t s_bus;

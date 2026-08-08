@@ -4,6 +4,7 @@ idf_component_register(
         "i2c_bus.c"
         "display.c"
         "touch.c"
+        "imu.c"
         "sht4x.c"
         "net_time.c"
         "ui.c"

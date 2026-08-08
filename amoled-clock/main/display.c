@@ -26,6 +26,19 @@ static const char *TAG = "display";
 #define SH8601_CMD_WRITE_BRIGHTNESS 0x51
 
 /*
+ * MADCTL（Memory Access Control）。bit7=MY、bit6=MX，同时翻这两位就是绕中心
+ * 转 180°，面板硬件直接完成，不花 CPU。
+ *
+ * 出厂序列写的是 0xF0（MY|MX|MV|ML），异或 0xC0 得到 0x30 就是翻转后的方向。
+ * 这里不能用 esp_lcd_panel_mirror()——SH8601 组件只实现了 mirror_x 的 BIT(6)，
+ * mirror_y 直接返回 ESP_ERR_NOT_SUPPORTED（esp_lcd_sh8601.c 的 panel_sh8601_mirror），
+ * 而且它内部维护的 madctl_val 和我们初始化序列里写死的 0xF0 本来就对不上。
+ */
+#define SH8601_CMD_MADCTL     0x36
+#define MADCTL_BASE           0xF0
+#define MADCTL_FLIP_MY_MX     0xC0
+
+/*
  * QSPI 模式下命令要包成 0x02<<24 | cmd<<8 才会被面板认出来。
  * SH8601 驱动内部的 tx_param() 做了这层封装，但没导出，所以这里自己包一遍——
  * 直接把裸 0x51 丢给 esp_lcd_panel_io_tx_param 发出去的是 0x00000051，
@@ -51,6 +64,7 @@ static esp_lcd_panel_handle_t    s_panel;
 static SemaphoreHandle_t         s_lvgl_mux;
 static uint8_t                   s_brightness = DISPLAY_BRIGHTNESS_DEFAULT;
 static bool                      s_on         = true;
+static bool                      s_flipped;
 
 /*
  * SH8601 厂商初始化序列，取自官方出厂固件。
@@ -240,6 +254,33 @@ static void panel_disp_on_off(bool on)
     display_lock(-1);
     esp_lcd_panel_disp_on_off(s_panel, on);
     display_unlock();
+}
+
+void display_set_flipped(bool flipped)
+{
+    if (flipped == s_flipped) {
+        return;
+    }
+    s_flipped = flipped;
+
+    const uint8_t madctl = flipped ? (MADCTL_BASE ^ MADCTL_FLIP_MY_MX) : MADCTL_BASE;
+
+    /*
+     * 只改扫描方向，LVGL 那边完全不知情——它照常按 0..535 x 0..239 画，
+     * 面板把地址反着映射到物理像素。所以不用动 draw_buf、也没有软件旋转开销。
+     * 改完强制整屏重画一次，否则残留的旧内容不会自己翻过来。
+     */
+    display_lock(-1);
+    esp_lcd_panel_io_tx_param(s_io, SH8601_QSPI_CMD(SH8601_CMD_MADCTL), &madctl, 1);
+    lv_obj_invalidate(lv_scr_act());
+    display_unlock();
+
+    ESP_LOGI(TAG, "屏幕方向：%s（MADCTL=0x%02X）", flipped ? "翻转 180°" : "正常", madctl);
+}
+
+bool display_is_flipped(void)
+{
+    return s_flipped;
 }
 
 void display_set_brightness(uint8_t brightness)

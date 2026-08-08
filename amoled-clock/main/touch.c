@@ -51,6 +51,15 @@ bool touch_read_point(uint16_t *x, uint16_t *y)
     /* 面板在 MADCTL=0xF0 下是上下翻转的，和出厂固件保持一致 */
     ty = LCD_V_RES - ty;
 
+    /*
+     * 屏幕转了 180° 之后触摸面板本身没动，两个轴都要再翻一次，
+     * 否则"往上滑"会变成往下调亮度。
+     */
+    if (display_is_flipped()) {
+        tx = LCD_H_RES - tx;
+        ty = LCD_V_RES - ty;
+    }
+
     *x = tx;
     *y = ty;
     return true;
