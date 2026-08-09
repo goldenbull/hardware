@@ -29,6 +29,9 @@ constexpr uint32_t kBatteryIntervalMs     = 10000;
 constexpr uint32_t kNtpSyncIntervalMs     = 60U * 60U * 1000U;
 constexpr uint32_t kAnimationIntervalMs   = 50;
 constexpr uint32_t kClockRetryMs          = 10000;
+// How long one NTP request is given before it counts as failed; the rest of
+// kClockRetryMs is the pause before the next request goes out.
+constexpr uint32_t kNtpAttemptMs          = 5000;
 constexpr uint32_t kBrightnessOverlayMs   = 1500;
 constexpr uint32_t kButtonRepeatDelayMs   = 500;
 constexpr uint32_t kButtonRepeatRateMs    = 150;
@@ -61,6 +64,16 @@ int      last_drawn_second   = -1;
 int      last_animation_mode = 0;
 bool     force_redraw        = true;
 bool     environment_dirty   = true;
+
+// Which stage of the startup sync the corner label reports. Written by the sync
+// task, read by the draw loop, so it stays a single volatile word.
+enum ClockSyncStage : uint8_t
+{
+    kStageWifi,   // still associating with the access point
+    kStageNtp,    // link is up, waiting for the NTP reply
+    kStageFailed, // the last request went unanswered; the next one is pending
+};
+volatile ClockSyncStage clock_sync_stage = kStageWifi;
 
 int      brightness_index         = kBrightnessDefault;
 bool     brightness_overlay_shown = false;
@@ -210,6 +223,23 @@ bool clockIsSynced()
     return time(nullptr) > kSaneEpoch;
 }
 
+// Sleeps up to duration_ms, cut short as soon as the clock lands or the link
+// drops, so the corner label never trails the real state by more than a poll.
+// Returns whether the clock is now synced.
+bool waitForClock(uint32_t duration_ms)
+{
+    const uint32_t deadline = millis() + duration_ms;
+    while (static_cast<int32_t>(millis() - deadline) < 0)
+    {
+        if (clockIsSynced())
+            return true;
+        if (WiFi.status() != WL_CONNECTED)
+            return false;
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    return clockIsSynced();
+}
+
 // Wi-Fi association and the NTP round trip both block for seconds at a time, so
 // they run here instead of in setup(): the clock draws epoch time from the first
 // frame and silently corrects itself once the sync completes.
@@ -218,6 +248,7 @@ void clockSyncTask(void*)
     if (runtime_config.wifi_ssid.isEmpty())
     {
         Serial.println("Wi-Fi is not configured, the clock stays on epoch time");
+        clock_sync_stage = kStageFailed;
         vTaskDelete(nullptr);
         return;
     }
@@ -232,7 +263,8 @@ void clockSyncTask(void*)
     {
         if (WiFi.status() != WL_CONNECTED)
         {
-            announced = false;
+            clock_sync_stage = kStageWifi;
+            announced        = false;
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
@@ -245,9 +277,15 @@ void clockSyncTask(void*)
 
         // Re-armed on every pass: a request that went out before the link was
         // usable would otherwise not be retried until the sync interval elapsed.
+        clock_sync_stage = kStageNtp;
         esp_sntp_set_sync_interval(kNtpSyncIntervalMs);
         configTzTime(runtime_config.timezone.c_str(), runtime_config.ntp_server.c_str());
-        vTaskDelay(pdMS_TO_TICKS(kClockRetryMs));
+        if (waitForClock(kNtpAttemptMs))
+            break;
+
+        // This attempt went unanswered, so say so until the next one goes out.
+        clock_sync_stage = kStageFailed;
+        waitForClock(kClockRetryMs - kNtpAttemptMs);
     }
 
     Serial.println("Clock synchronised from NTP");
@@ -534,12 +572,17 @@ void drawScreen(const tm& now, int animation_mode)
         drawBrightnessOverlay();
     else if (!clockIsSynced())
     {
+        const bool  failed = clock_sync_stage == kStageFailed;
+        const char* label  = failed                          ? "校时失败"
+                             : clock_sync_stage == kStageWifi ? "WiFi连接中"
+                                                             : "校时中";
+
         // Same corner as the brightness bar, so it yields while that is up.
         canvas.setTextDatum(top_left);
-        canvas.setTextColor(TFT_ORANGE, TFT_BLACK);
+        canvas.setTextColor(failed ? TFT_RED : TFT_ORANGE, TFT_BLACK);
         canvas.setFont(&fonts::efontCN_24); // scaled rather than efontCN_16: a
         canvas.setTextSize(0.7f);           // second CJK font costs 300+ KB of flash
-        canvas.drawString("未校时", 6, 6);
+        canvas.drawString(label, 6, 6);
         canvas.setTextSize(1.0f);
     }
 
