@@ -8,21 +8,24 @@
 
 ## 配置
 
-本地 Wi-Fi 配置位于 `include/secrets.h`，该文件已被 Git 忽略。新环境可复制 `include/secrets.example.h` 并填写：
+启动时读取 TF 卡根目录下的 `clock-config.ini`，改配置不需要重新编译。把仓库里的 `clock-config.example.ini` 复制到卡上重命名即可：
 
-```cpp
-#define APP_WIFI_SSID "your-ssid"
-#define APP_WIFI_PASSWORD "your-password"
+```ini
+wifi_ssid = your-ssid
+wifi_password = your-password
+ntp_server = ntp.aliyun.com
+timezone = CST-8
+cold_threshold = 20
+hot_threshold = 30
 ```
+
+格式为每行 `key = value`，`#` 或 `;` 开头是注释，`[section]` 行会被忽略（键名是平的，分组只是给人看的）。值两端的空格会被去掉，密码本身首尾带空格时用引号包起来。`cold_threshold` 必须小于 `hot_threshold`，否则两项一起回退到默认值。
+
+没插卡、没有该文件、或文件里缺某一项时，对应的值退回编译时的默认值——即 `include/secrets.h`（已被 Git 忽略，可从 `include/secrets.example.h` 复制）和 `include/app_config.h` 里的 `APP_*` 宏。所以卡是可选的，出厂默认烧一份进固件、现场用卡改配置这两种用法都成立。
+
+TF 卡与 LCD 共用 SPI 总线，因此只在启动时挂载一次，读完立即卸载，运行期间不占用总线。串口会打印实际生效的配置。
 
 程序启动时会自动检测 I2C 地址 `0x44` 上的 SHT30。传感器未连接时，程序每五秒低频重试；运行中连接或断开传感器均不需要重新编译或重启。
-
-NTP 服务器和时区可在同一文件中覆盖：
-
-```cpp
-#define APP_NTP_SERVER "ntp.aliyun.com"
-#define APP_TIMEZONE "CST-8"
-```
 
 ## 编译和烧录
 
@@ -34,9 +37,11 @@ pio run --target upload
 pio device monitor
 ```
 
-串口已在 `platformio.ini` 中配置为 `/dev/cu.usbserial-01DB74DA`。如果设备端口变化，请同时修改 `upload_port` 和 `monitor_port`。
+串口端口由 PlatformIO 自动探测。波特率已在 `platformio.ini` 中设为 `monitor_speed = 115200`，与固件里的 `Serial.begin(115200)` 一致；不设这一项时 PlatformIO 默认用 9600，串口监视器会输出乱码。
 
-程序连接 Wi-Fi 后通过 NTP 校时，并每小时重新同步。连接 SHT30 后，温度高于 30°C 时显示火焰动画，低于 20°C 时显示雪花动画。
+Wi-Fi 连接和 NTP 校时在后台任务里进行，`setup()` 不等待，因此上电后立即出画面。校时成功前时间从 epoch 开始走，屏幕左上角显示橙色“未校时”，同步完成后自动消失。连不上时后台每十秒重试一次；同步成功后每小时校一次漂移。
+
+连接 SHT30 后，温度高于 `hot_threshold` 显示火焰动画，低于 `cold_threshold` 显示雪花动画。
 
 ## 按键
 
@@ -48,9 +53,9 @@ pio device monitor
 | B | 调暗 |
 | C | 调亮 |
 
-亮度共十档，按住 B 或 C 可连续调节。调节时左上角短暂显示太阳图标和档位条，1.5 秒后自动消失。
+亮度共五档，按住 B 或 C 可连续调节。调节时左上角短暂显示太阳图标和档位条，1.5 秒后自动消失。
 
-最暗一档仍然可见（PWM 占空比 16/255），关屏只能用 Button A。背光关闭时 B 和 C 无效，避免在黑屏状态下误以为设备失灵。档位表在 `src/main.cpp` 的 `kBrightnessLevels` 中，可按需修改。亮度不写入 NVS，重启后回到默认的第 7 档。
+最暗一档仍然可见（PWM 占空比 16/255），关屏只能用 Button A。背光关闭时 B 和 C 无效，避免在黑屏状态下误以为设备失灵。档位表在 `src/main.cpp` 的 `kBrightnessLevels` 中，可按需修改。亮度不写入 NVS，重启后回到默认的第 3 档。
 
 ## 电量显示
 

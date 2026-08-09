@@ -9,10 +9,13 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "app_config.h"
+#include "runtime_config.h"
 
 namespace
 {
+RuntimeConfig runtime_config = defaultConfig();
+
+
 constexpr uint8_t kSht30Address = 0x44;
 // Core Basic v2.7 carries an IP5306 power-management IC strapped for I2C.
 constexpr uint8_t  kIp5306Address         = 0x75;
@@ -35,7 +38,7 @@ constexpr time_t   kSaneEpoch             = 1704067200; // 2024-01-01 UTC
 // screen stays readable in the dark, only Button A turns the backlight off.
 constexpr uint8_t kBrightnessLevels[] = {16, 40, 80, 150, 255};
 constexpr int     kBrightnessCount    = sizeof(kBrightnessLevels) / sizeof(kBrightnessLevels[0]);
-constexpr int     kBrightnessDefault  = 3; // 150, close to the fixed level used before this was adjustable
+constexpr int     kBrightnessDefault  = 2; // the third step, duty 80
 
 M5Canvas canvas(&M5.Display);
 bool     screen_on           = true;
@@ -211,17 +214,17 @@ bool clockIsSynced()
 // frame and silently corrects itself once the sync completes.
 void clockSyncTask(void*)
 {
-    if (APP_WIFI_SSID[0] == '\0')
+    if (runtime_config.wifi_ssid.isEmpty())
     {
         Serial.println("Wi-Fi is not configured, the clock stays on epoch time");
         vTaskDelete(nullptr);
         return;
     }
 
-    Serial.printf("Connecting to Wi-Fi SSID: %s\n", APP_WIFI_SSID);
+    Serial.printf("Connecting to Wi-Fi SSID: %s\n", runtime_config.wifi_ssid.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
-    WiFi.begin(APP_WIFI_SSID, APP_WIFI_PASSWORD);
+    WiFi.begin(runtime_config.wifi_ssid.c_str(), runtime_config.wifi_password.c_str());
 
     bool announced = false;
     while (!clockIsSynced())
@@ -242,7 +245,7 @@ void clockSyncTask(void*)
         // Re-armed on every pass: a request that went out before the link was
         // usable would otherwise not be retried until the sync interval elapsed.
         esp_sntp_set_sync_interval(kNtpSyncIntervalMs);
-        configTzTime(APP_TIMEZONE, APP_NTP_SERVER);
+        configTzTime(runtime_config.timezone.c_str(), runtime_config.ntp_server.c_str());
         vTaskDelay(pdMS_TO_TICKS(kClockRetryMs));
     }
 
@@ -301,9 +304,9 @@ int getAnimationMode()
 {
     if (!sensor_ok)
         return 0;
-    if (temperature < 20.0f)
+    if (temperature < runtime_config.cold_threshold)
         return -1;
-    if (temperature > 30.0f)
+    if (temperature > runtime_config.hot_threshold)
         return 1;
     return 0;
 }
@@ -401,7 +404,7 @@ float fitTextSize(const char* text, int max_width, float max_size)
 // Bare readings, no labels: the colour tells temperature and humidity apart.
 void drawEnvironment()
 {
-    constexpr int   kTop       = 155;
+    constexpr int   kTop       = 184;
     constexpr int   kGap       = 24;  // between the two readings
     constexpr int   kUnitGap   = 3;   // between a reading and its unit
     constexpr float kValueSize = 0.65f;
@@ -466,7 +469,7 @@ void drawEnvironment()
 void drawDate(const tm& now)
 {
     static const char* const weekdays[] = {"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"};
-    constexpr int            kTop       = 42;
+    constexpr int            kTop       = 34;
     constexpr int            kGap       = 14;
     constexpr float          kWeekSize  = 1.0f;
 
@@ -523,7 +526,7 @@ void drawScreen(const tm& now, int animation_mode)
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
     canvas.setFont(&fonts::Font7);
     canvas.setTextSize(fitTextSize(clock, 312, 1.15f));
-    canvas.drawCenterString(clock, 160, 86);
+    canvas.drawCenterString(clock, 160, 96);
     canvas.setTextSize(1.0f);
 
     drawEnvironment();
@@ -541,14 +544,9 @@ void setup()
     Serial.begin(115200);
     Serial.println("M5Stack clock starting");
 
-    // Set before anything can render, so pre-sync epoch time is still shown in
-    // the configured zone rather than UTC.
-    setenv("TZ", APP_TIMEZONE, 1);
-    tzset();
-
-    auto config          = M5.config();
-    config.clear_display = true;
-    M5.begin(config);
+    auto m5_config          = M5.config();
+    m5_config.clear_display = true;
+    M5.begin(m5_config);
     display_ok = M5.getDisplayCount() != 0;
     if (display_ok)
     {
@@ -560,6 +558,14 @@ void setup()
                   static_cast<int>(M5.getBoard()),
                   static_cast<unsigned>(M5.getDisplayCount()));
     applyBrightness();
+
+    // The TF card shares the LCD's SPI bus, so this has to come after M5.begin().
+    loadConfigFromSd(runtime_config);
+
+    // Set before anything can render, so pre-sync epoch time is still shown in
+    // the configured zone rather than UTC.
+    setenv("TZ", runtime_config.timezone.c_str(), 1);
+    tzset();
 
     Wire.begin(21, 22);
     sensor_present    = detectSht30();

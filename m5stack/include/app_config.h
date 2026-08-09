@@ -19,3 +19,12 @@
 #ifndef APP_TIMEZONE
 #define APP_TIMEZONE "CST-8"
 #endif
+
+// Fallbacks only. /clock-config.ini on the TF card overrides all of these.
+#ifndef APP_COLD_THRESHOLD
+#define APP_COLD_THRESHOLD 18.0f
+#endif
+
+#ifndef APP_HOT_THRESHOLD
+#define APP_HOT_THRESHOLD 30.0f
+#endif
