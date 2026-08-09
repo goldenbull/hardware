@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "lunar_calendar.h"
 #include "runtime_config.h"
 
 namespace
@@ -466,20 +467,15 @@ void drawEnvironment()
 
 // The weekday is drawn separately and a size down: full-width CJK glyphs look a
 // good deal heavier than the half-width digits at any shared text size.
-void drawDate(const tm& now)
+void drawGregorianDate(const tm& now, int top)
 {
     static const char* const weekdays[] = {"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"};
-    constexpr int            kTop       = 34;
     constexpr int            kGap       = 14;
     constexpr float          kWeekSize  = 1.0f;
 
     char date[16];
     snprintf(date, sizeof(date), "%04d-%02d-%02d", now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
     const char* weekday = weekdays[now.tm_wday];
-
-    canvas.setTextDatum(top_left);
-    canvas.setTextColor(TFT_CYAN, TFT_BLACK);
-    canvas.setFont(&fonts::efontCN_24);
 
     const float date_size = fitTextSize(date, 200, 1.5f);
     const int   date_width  = canvas.textWidth(date);
@@ -491,10 +487,36 @@ void drawDate(const tm& now)
 
     int x = 160 - (date_width + kGap + week_width) / 2;
     canvas.setTextSize(date_size);
-    canvas.drawString(date, x, kTop);
+    canvas.drawString(date, x, top);
     canvas.setTextSize(kWeekSize);
-    canvas.drawString(weekday, x + date_width + kGap, kTop + (date_height - week_height) / 2);
+    canvas.drawString(weekday, x + date_width + kGap, top + (date_height - week_height) / 2);
     canvas.setTextSize(1.0f);
+}
+
+// The date row alternates between the two calendars. Both variants are centred
+// inside the same fixed-height band so the row does not jump on the swap.
+void drawDate(const tm& now)
+{
+    constexpr int kTop       = 34;
+    constexpr int kRowHeight = 36; // efontCN_24 at 1.5x, the taller variant
+    constexpr int kSwapSecs  = 2;
+
+    canvas.setTextDatum(top_left);
+    canvas.setTextColor(TFT_CYAN, TFT_BLACK);
+    canvas.setFont(&fonts::efontCN_24);
+
+    char lunar[48];
+    if ((now.tm_sec / kSwapSecs) % 2 != 0 && formatLunarDate(now, lunar, sizeof(lunar)))
+    {
+        // All full-width glyphs here, so this stays a size below the Gregorian
+        // digits to keep the two frames at a similar visual weight.
+        canvas.setTextSize(fitTextSize(lunar, 312, 1.25f));
+        canvas.drawCenterString(lunar, 160, kTop + (kRowHeight - canvas.fontHeight()) / 2);
+        canvas.setTextSize(1.0f);
+        return;
+    }
+
+    drawGregorianDate(now, kTop);
 }
 
 void drawScreen(const tm& now, int animation_mode)
