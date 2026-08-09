@@ -24,17 +24,18 @@ constexpr uint32_t kSensorProbeIntervalMs = 5000;
 constexpr uint32_t kBatteryIntervalMs     = 10000;
 constexpr uint32_t kNtpSyncIntervalMs     = 60U * 60U * 1000U;
 constexpr uint32_t kAnimationIntervalMs   = 50;
-constexpr uint32_t kWifiTimeoutMs         = 20000;
+constexpr uint32_t kClockRetryMs          = 10000;
 constexpr uint32_t kBrightnessOverlayMs   = 1500;
 constexpr uint32_t kButtonRepeatDelayMs   = 500;
 constexpr uint32_t kButtonRepeatRateMs    = 150;
+constexpr time_t   kSaneEpoch             = 1704067200; // 2024-01-01 UTC
 
 // Backlight duty ladder, spaced roughly geometrically so the steps look even.
 // The first entry is the dimmest setting and is deliberately non-zero: the
 // screen stays readable in the dark, only Button A turns the backlight off.
-constexpr uint8_t kBrightnessLevels[] = {16, 24, 36, 52, 76, 104, 128, 160, 200, 255};
+constexpr uint8_t kBrightnessLevels[] = {16, 40, 80, 150, 255};
 constexpr int     kBrightnessCount    = sizeof(kBrightnessLevels) / sizeof(kBrightnessLevels[0]);
-constexpr int     kBrightnessDefault  = 6; // 128, the level used before this was adjustable
+constexpr int     kBrightnessDefault  = 3; // 150, close to the fixed level used before this was adjustable
 
 M5Canvas canvas(&M5.Display);
 bool     screen_on           = true;
@@ -198,66 +199,55 @@ bool buttonRepeat(m5::Button_Class& button, uint32_t& repeat_at, uint32_t now_ms
     return false;
 }
 
-void showStatus(const char* line1, const char* line2 = nullptr)
+// Until NTP lands the RTC still counts from the epoch, so any timestamp older
+// than this is proof that no sync has happened yet.
+bool clockIsSynced()
 {
-    if (!display_ok)
-        return;
-
-    canvas.fillScreen(TFT_BLACK);
-    canvas.setTextDatum(middle_center);
-    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
-    canvas.setFont(&fonts::efontCN_24);
-    canvas.drawString(line1, 160, line2 ? 100 : 120);
-    if (line2)
-        canvas.drawString(line2, 160, 140);
-    canvas.pushSprite(0, 0);
+    return time(nullptr) > kSaneEpoch;
 }
 
-bool connectWifi()
+// Wi-Fi association and the NTP round trip both block for seconds at a time, so
+// they run here instead of in setup(): the clock draws epoch time from the first
+// frame and silently corrects itself once the sync completes.
+void clockSyncTask(void*)
 {
     if (APP_WIFI_SSID[0] == '\0')
     {
-        showStatus("未设置 Wi-Fi");
-        Serial.println("Wi-Fi credentials are not configured");
-        return false;
+        Serial.println("Wi-Fi is not configured, the clock stays on epoch time");
+        vTaskDelete(nullptr);
+        return;
     }
 
-    showStatus("正在连接 Wi-Fi...");
     Serial.printf("Connecting to Wi-Fi SSID: %s\n", APP_WIFI_SSID);
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     WiFi.begin(APP_WIFI_SSID, APP_WIFI_PASSWORD);
 
-    const uint32_t started = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - started < kWifiTimeoutMs)
+    bool announced = false;
+    while (!clockIsSynced())
     {
-        M5.update();
-        delay(250);
+        if (WiFi.status() != WL_CONNECTED)
+        {
+            announced = false;
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+        if (!announced)
+        {
+            Serial.print("Wi-Fi connected, IP: ");
+            Serial.println(WiFi.localIP());
+            announced = true;
+        }
+
+        // Re-armed on every pass: a request that went out before the link was
+        // usable would otherwise not be retried until the sync interval elapsed.
+        esp_sntp_set_sync_interval(kNtpSyncIntervalMs);
+        configTzTime(APP_TIMEZONE, APP_NTP_SERVER);
+        vTaskDelay(pdMS_TO_TICKS(kClockRetryMs));
     }
 
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        showStatus("Wi-Fi 连接失败");
-        Serial.printf("Wi-Fi connection failed, status=%d\n", WiFi.status());
-        return false;
-    }
-
-    Serial.print("Wi-Fi connected, IP: ");
-    Serial.println(WiFi.localIP());
-    return true;
-}
-
-void startClockSync()
-{
-    showStatus("正在校准时间...");
-    setenv("TZ", APP_TIMEZONE, 1);
-    tzset();
-    esp_sntp_set_sync_interval(kNtpSyncIntervalMs);
-    configTzTime(APP_TIMEZONE, APP_NTP_SERVER);
-
-    tm now{};
-    for (int attempt = 0; attempt < 30 && !getLocalTime(&now, 1000); ++attempt)
-        M5.update();
+    Serial.println("Clock synchronised from NTP");
+    vTaskDelete(nullptr);
 }
 
 void drawSnow(uint32_t frame)
@@ -375,9 +365,9 @@ void drawBrightnessOverlay()
     constexpr int kSunRadius     = 4;
     constexpr int kSegmentLeft   = 26;
     constexpr int kSegmentTop    = 10;
-    constexpr int kSegmentWidth  = 6;
+    constexpr int kSegmentWidth  = 11;
     constexpr int kSegmentHeight = 8;
-    constexpr int kSegmentPitch  = 8;
+    constexpr int kSegmentPitch  = 14;
 
     canvas.fillCircle(kSunX, kSunY, kSunRadius, TFT_YELLOW);
     canvas.drawLine(kSunX, kSunY - 9, kSunX, kSunY - 7, TFT_YELLOW);
@@ -395,18 +385,118 @@ void drawBrightnessOverlay()
     }
 }
 
-void drawScreen(const tm& now, int animation_mode)
+// Largest text size no wider than max_width. The caller selects the font first.
+float fitTextSize(const char* text, int max_width, float max_size)
+{
+    for (float size = max_size; size > 1.0f; size -= 0.05f)
+    {
+        canvas.setTextSize(size);
+        if (canvas.textWidth(text) <= max_width)
+            return size;
+    }
+    canvas.setTextSize(1.0f);
+    return 1.0f;
+}
+
+// Bare readings, no labels: the colour tells temperature and humidity apart.
+void drawEnvironment()
+{
+    constexpr int   kTop       = 155;
+    constexpr int   kGap       = 24;  // between the two readings
+    constexpr int   kUnitGap   = 3;   // between a reading and its unit
+    constexpr float kValueSize = 0.65f;
+
+    canvas.setTextSize(1.0f);
+    canvas.setTextDatum(top_left);
+
+    if (!sensor_ok)
+    {
+        canvas.setFont(&fonts::efontCN_24);
+        canvas.setTextColor(TFT_ORANGE, TFT_BLACK);
+        canvas.drawCenterString("温湿度传感器不可用", 160, kTop + 12);
+        return;
+    }
+
+    char temp[8];
+    char rh[8];
+    snprintf(temp, sizeof(temp), "%.1f", temperature);
+    snprintf(rh, sizeof(rh), "%.0f", humidity);
+
+    canvas.setFont(&fonts::Font7);
+    canvas.setTextSize(kValueSize);
+    const int value_height = canvas.fontHeight();
+    const int temp_width   = canvas.textWidth(temp);
+    const int rh_width     = canvas.textWidth(rh);
+
+    // Font7 has no degree or percent glyph, so the units come from the CJK font,
+    // scaled to the digit height instead of left at its own.
+    canvas.setFont(&fonts::efontCN_24);
+    canvas.setTextSize(1.0f);
+    const float unit_size = static_cast<float>(value_height) / canvas.fontHeight();
+    canvas.setTextSize(unit_size);
+    const int temp_unit_width = canvas.textWidth("°C");
+    const int rh_unit_width   = canvas.textWidth("%");
+
+    const int total = temp_width + kUnitGap + temp_unit_width + kGap + rh_width + kUnitGap + rh_unit_width;
+    int       x     = 160 - total / 2;
+
+    canvas.setTextColor(TFT_GREEN, TFT_BLACK);
+    canvas.setFont(&fonts::Font7);
+    canvas.setTextSize(kValueSize);
+    canvas.drawString(temp, x, kTop);
+    x += temp_width + kUnitGap;
+    canvas.setFont(&fonts::efontCN_24);
+    canvas.setTextSize(unit_size);
+    canvas.drawString("°C", x, kTop);
+    x += temp_unit_width + kGap;
+
+    canvas.setTextColor(TFT_SKYBLUE, TFT_BLACK);
+    canvas.setFont(&fonts::Font7);
+    canvas.setTextSize(kValueSize);
+    canvas.drawString(rh, x, kTop);
+    x += rh_width + kUnitGap;
+    canvas.setFont(&fonts::efontCN_24);
+    canvas.setTextSize(unit_size);
+    canvas.drawString("%", x, kTop);
+    canvas.setTextSize(1.0f);
+}
+
+// The weekday is drawn separately and a size down: full-width CJK glyphs look a
+// good deal heavier than the half-width digits at any shared text size.
+void drawDate(const tm& now)
 {
     static const char* const weekdays[] = {"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"};
-    char                     date[32];
-    char                     clock[16];
-    snprintf(date,
-             sizeof(date),
-             "%04d-%02d-%02d  %s",
-             now.tm_year + 1900,
-             now.tm_mon + 1,
-             now.tm_mday,
-             weekdays[now.tm_wday]);
+    constexpr int            kTop       = 42;
+    constexpr int            kGap       = 14;
+    constexpr float          kWeekSize  = 1.0f;
+
+    char date[16];
+    snprintf(date, sizeof(date), "%04d-%02d-%02d", now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
+    const char* weekday = weekdays[now.tm_wday];
+
+    canvas.setTextDatum(top_left);
+    canvas.setTextColor(TFT_CYAN, TFT_BLACK);
+    canvas.setFont(&fonts::efontCN_24);
+
+    const float date_size = fitTextSize(date, 200, 1.5f);
+    const int   date_width  = canvas.textWidth(date);
+    const int   date_height = canvas.fontHeight();
+
+    canvas.setTextSize(kWeekSize);
+    const int week_width  = canvas.textWidth(weekday);
+    const int week_height = canvas.fontHeight();
+
+    int x = 160 - (date_width + kGap + week_width) / 2;
+    canvas.setTextSize(date_size);
+    canvas.drawString(date, x, kTop);
+    canvas.setTextSize(kWeekSize);
+    canvas.drawString(weekday, x + date_width + kGap, kTop + (date_height - week_height) / 2);
+    canvas.setTextSize(1.0f);
+}
+
+void drawScreen(const tm& now, int animation_mode)
+{
+    char clock[16];
     snprintf(clock, sizeof(clock), "%02d:%02d:%02d", now.tm_hour, now.tm_min, now.tm_sec);
 
     canvas.fillScreen(TFT_BLACK);
@@ -417,23 +507,26 @@ void drawScreen(const tm& now, int animation_mode)
     drawBattery();
     if (brightness_overlay_shown)
         drawBrightnessOverlay();
+    else if (!clockIsSynced())
+    {
+        // Same corner as the brightness bar, so it yields while that is up.
+        canvas.setTextDatum(top_left);
+        canvas.setTextColor(TFT_ORANGE, TFT_BLACK);
+        canvas.setFont(&fonts::efontCN_24); // scaled rather than efontCN_16: a
+        canvas.setTextSize(0.7f);           // second CJK font costs 300+ KB of flash
+        canvas.drawString("未校时", 6, 6);
+        canvas.setTextSize(1.0f);
+    }
 
-    canvas.setTextColor(TFT_CYAN, TFT_BLACK);
-    canvas.setFont(&fonts::efontCN_24);
-    canvas.drawCenterString(date, 160, 48);
+    drawDate(now);
 
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
     canvas.setFont(&fonts::Font7);
+    canvas.setTextSize(fitTextSize(clock, 312, 1.15f));
     canvas.drawCenterString(clock, 160, 86);
+    canvas.setTextSize(1.0f);
 
-    char environment[64];
-    if (sensor_ok)
-        snprintf(environment, sizeof(environment), "温度 %.1f°C    湿度 %.1f%%", temperature, humidity);
-    else
-        snprintf(environment, sizeof(environment), "温湿度传感器不可用");
-    canvas.setTextColor(sensor_ok ? TFT_GREEN : TFT_ORANGE, TFT_BLACK);
-    canvas.setFont(&fonts::efontCN_24);
-    canvas.drawCenterString(environment, 160, 180);
+    drawEnvironment();
 
     canvas.pushSprite(0, 0);
     last_drawn_second   = now.tm_sec;
@@ -447,6 +540,11 @@ void setup()
 {
     Serial.begin(115200);
     Serial.println("M5Stack clock starting");
+
+    // Set before anything can render, so pre-sync epoch time is still shown in
+    // the configured zone rather than UTC.
+    setenv("TZ", APP_TIMEZONE, 1);
+    tzset();
 
     auto config          = M5.config();
     config.clear_display = true;
@@ -472,8 +570,7 @@ void setup()
     last_battery_read = millis();
     Serial.printf("IP5306 power IC: %s\n", battery_present ? "detected" : "not detected");
 
-    if (connectWifi())
-        startClockSync();
+    xTaskCreate(clockSyncTask, "clock_sync", 4096, nullptr, 1, nullptr);
 }
 
 void loop()
@@ -551,8 +648,12 @@ void loop()
             force_redraw = true;
     }
 
-    tm now{};
-    if (display_ok && screen_on && getLocalTime(&now, 10))
+    // Deliberately not getLocalTime(): that rejects any year before 2016, which
+    // would leave the screen blank until NTP replies.
+    const time_t epoch = time(nullptr);
+    tm           now{};
+    localtime_r(&epoch, &now);
+    if (display_ok && screen_on)
     {
         const int  animation_mode = getAnimationMode();
         const bool animation_due  = animation_mode != 0 && now_ms - last_animation_draw >= kAnimationIntervalMs;
