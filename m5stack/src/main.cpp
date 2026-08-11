@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <esp_sntp.h>
+#include <sys/time.h>
 #include <time.h>
 
 #include <cmath>
@@ -35,7 +36,24 @@ constexpr uint32_t kNtpAttemptMs          = 5000;
 constexpr uint32_t kBrightnessOverlayMs   = 1500;
 constexpr uint32_t kButtonRepeatDelayMs   = 500;
 constexpr uint32_t kButtonRepeatRateMs    = 150;
-constexpr time_t   kSaneEpoch             = 1704067200; // 2024-01-01 UTC
+// Button B and C held together for this long opens the manual clock setup.
+constexpr uint32_t kSetupHoldMs  = 3000;
+constexpr uint32_t kSetupBlinkMs = 400;
+// The lower bound is where the epoch starts; the upper is where the lunar table
+// runs out, and there is no reason to hand-set a clock beyond either.
+constexpr int kSetupMinYear = 1970;
+constexpr int kSetupMaxYear = 2100;
+
+// Order in which Button A walks the fields. One full pass ends the setup.
+enum SetupField : uint8_t
+{
+    kFieldYear,
+    kFieldMonth,
+    kFieldDay,
+    kFieldHour,
+    kFieldMinute,
+    kFieldCount,
+};
 
 // Backlight duty ladder, spaced roughly geometrically so the steps look even.
 // The first entry is the dimmest setting and is deliberately non-zero: the
@@ -74,12 +92,25 @@ enum ClockSyncStage : uint8_t
     kStageFailed, // the last request went unanswered; the next one is pending
 };
 volatile ClockSyncStage clock_sync_stage = kStageWifi;
+// Set from the SNTP task. A wall-clock test would not do as a stand-in: setting
+// the date by hand also moves the clock into the present.
+volatile bool ntp_synced = false;
 
 int      brightness_index         = kBrightnessDefault;
 bool     brightness_overlay_shown = false;
 uint32_t brightness_overlay_until = 0;
-uint32_t dim_repeat_at            = 0;
-uint32_t brighten_repeat_at       = 0;
+// Shared by the brightness steps and the manual-setup steps; the two modes are
+// mutually exclusive, so one pair of repeat timers covers both.
+uint32_t btn_b_repeat_at = 0;
+uint32_t btn_c_repeat_at = 0;
+
+bool     setup_mode          = false;
+int      setup_field         = kFieldYear;
+tm       setup_time{};
+uint32_t setup_hold_since    = 0;
+uint32_t setup_blink_at      = 0;
+bool     setup_blink_on      = true;
+bool     setup_await_release = false;
 
 uint8_t crc8(const uint8_t* data, size_t size)
 {
@@ -216,11 +247,140 @@ bool buttonRepeat(m5::Button_Class& button, uint32_t& repeat_at, uint32_t now_ms
     return false;
 }
 
-// Until NTP lands the RTC still counts from the epoch, so any timestamp older
-// than this is proof that no sync has happened yet.
+int daysInMonth(int year, int month)
+{
+    static constexpr int kLengths[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0))
+        return 29;
+    return kLengths[month - 1];
+}
+
+// Refills tm_wday and tm_yday so the weekday and the lunar date stay correct
+// while the user scrolls through the fields.
+void normalizeSetupTime()
+{
+    setup_time.tm_sec   = 0;
+    setup_time.tm_isdst = -1;
+    tm normalized       = setup_time;
+    if (mktime(&normalized) != static_cast<time_t>(-1))
+        setup_time = normalized;
+}
+
+void adjustSetupField(int delta)
+{
+    switch (setup_field)
+    {
+    case kFieldYear:
+    {
+        // Clamped rather than wrapped: rolling over a 130-year span would make
+        // the year unusable to step through.
+        const int year = setup_time.tm_year + 1900 + delta;
+        if (year >= kSetupMinYear && year <= kSetupMaxYear)
+            setup_time.tm_year = year - 1900;
+        break;
+    }
+    case kFieldMonth:
+        setup_time.tm_mon = (setup_time.tm_mon + delta + 12) % 12;
+        break;
+    case kFieldDay:
+    {
+        const int days     = daysInMonth(setup_time.tm_year + 1900, setup_time.tm_mon + 1);
+        setup_time.tm_mday = (setup_time.tm_mday - 1 + delta + days) % days + 1;
+        break;
+    }
+    case kFieldHour:
+        setup_time.tm_hour = (setup_time.tm_hour + delta + 24) % 24;
+        break;
+    case kFieldMinute:
+        setup_time.tm_min = (setup_time.tm_min + delta + 60) % 60;
+        break;
+    default:
+        break;
+    }
+
+    // Stepping the month or the year can strand the day past the month's end.
+    const int days = daysInMonth(setup_time.tm_year + 1900, setup_time.tm_mon + 1);
+    if (setup_time.tm_mday > days)
+        setup_time.tm_mday = days;
+
+    normalizeSetupTime();
+    force_redraw = true;
+}
+
+void enterSetupMode(const tm& now)
+{
+    setup_mode  = true;
+    setup_field = kFieldYear;
+    setup_time  = now;
+    if (setup_time.tm_year + 1900 < kSetupMinYear)
+        setup_time.tm_year = kSetupMinYear - 1900;
+    normalizeSetupTime();
+
+    setup_blink_on = true;
+    setup_blink_at = millis() + kSetupBlinkMs;
+    // B and C are still down from the entry gesture; ignore them until they are
+    // released so the first field does not start racing straight away.
+    setup_await_release = true;
+    force_redraw        = true;
+    Serial.println("Manual clock setup: entered");
+}
+
+void exitSetupMode(bool commit)
+{
+    setup_mode       = false;
+    setup_hold_since = 0;
+    force_redraw     = true;
+
+    if (!commit)
+    {
+        Serial.println("Manual clock setup: abandoned, NTP took over");
+        return;
+    }
+
+    normalizeSetupTime();
+    tm           entered = setup_time;
+    const time_t epoch   = mktime(&entered);
+    if (epoch == static_cast<time_t>(-1))
+    {
+        Serial.println("Manual clock setup: the entered date is not representable, discarded");
+        return;
+    }
+
+    const timeval value{epoch, 0};
+    settimeofday(&value, nullptr);
+    Serial.printf("Manual clock setup: clock set to %04d-%02d-%02d %02d:%02d:00\n",
+                  setup_time.tm_year + 1900,
+                  setup_time.tm_mon + 1,
+                  setup_time.tm_mday,
+                  setup_time.tm_hour,
+                  setup_time.tm_min);
+}
+
+// True once B and C have been held together long enough to open the setup.
+bool setupGestureHeld(uint32_t now_ms)
+{
+    if (!M5.BtnB.isPressed() || !M5.BtnC.isPressed())
+    {
+        setup_hold_since = 0;
+        return false;
+    }
+    if (setup_hold_since == 0)
+    {
+        setup_hold_since = now_ms;
+        return false;
+    }
+    return now_ms - setup_hold_since >= kSetupHoldMs;
+}
+
+// Runs on the SNTP task once a reply has been applied to the system clock.
+void onNtpSync(timeval*)
+{
+    ntp_synced = true;
+}
+
 bool clockIsSynced()
 {
-    return time(nullptr) > kSaneEpoch;
+    return ntp_synced;
 }
 
 // Sleeps up to duration_ms, cut short as soon as the clock lands or the link
@@ -503,6 +663,59 @@ void drawEnvironment()
     canvas.setTextSize(1.0f);
 }
 
+bool fieldHidden(int field)
+{
+    return setup_mode && !setup_blink_on && setup_field == field;
+}
+
+// Paints over one substring of a string already drawn at `left`, which is how
+// the field under edit blinks. Cheaper than re-rendering the row in pieces, and
+// exact for any font: the caller only has to leave the font and size in place.
+void blankTextSpan(const char* text, int offset, int length, int left, int top)
+{
+    char buffer[16];
+    if (offset >= static_cast<int>(sizeof(buffer)) || length >= static_cast<int>(sizeof(buffer)))
+        return;
+
+    memcpy(buffer, text, offset);
+    buffer[offset] = '\0';
+    const int x    = left + canvas.textWidth(buffer);
+
+    memcpy(buffer, text + offset, length);
+    buffer[length] = '\0';
+    canvas.fillRect(x, top, canvas.textWidth(buffer), canvas.fontHeight(), TFT_BLACK);
+}
+
+// Icons above the three front buttons, shown only during manual setup: a ring
+// with an arrowhead for "next field", then minus and plus.
+void drawButtonHints()
+{
+    constexpr int   kCenterY   = 220;
+    constexpr int   kRadius    = 11;
+    constexpr int   kCenters[] = {64, 160, 256};
+    constexpr float kArcEnd    = 300.0f; // degrees; the gap runs from here to 20
+
+    canvas.drawArc(kCenters[0], kCenterY, kRadius - 3, kRadius, 20.0f, kArcEnd, TFT_WHITE);
+
+    // Arrowhead closing the ring: tip along the tangent, base across the radius,
+    // so the gap reads as rotation rather than as a broken circle.
+    const float cos_end = cosf(kArcEnd * DEG_TO_RAD);
+    const float sin_end = sinf(kArcEnd * DEG_TO_RAD);
+    const int   end_x   = kCenters[0] + static_cast<int>(cos_end * (kRadius - 1.5f));
+    const int   end_y   = kCenterY + static_cast<int>(sin_end * (kRadius - 1.5f));
+    canvas.fillTriangle(end_x - static_cast<int>(sin_end * 8),
+                        end_y + static_cast<int>(cos_end * 8),
+                        end_x + static_cast<int>(cos_end * 5),
+                        end_y + static_cast<int>(sin_end * 5),
+                        end_x - static_cast<int>(cos_end * 5),
+                        end_y - static_cast<int>(sin_end * 5),
+                        TFT_WHITE);
+
+    canvas.fillRect(kCenters[1] - 10, kCenterY - 2, 20, 4, TFT_WHITE);
+    canvas.fillRect(kCenters[2] - 10, kCenterY - 2, 20, 4, TFT_WHITE);
+    canvas.fillRect(kCenters[2] - 2, kCenterY - 10, 4, 20, TFT_WHITE);
+}
+
 // The weekday is drawn separately and a size down: full-width CJK glyphs look a
 // good deal heavier than the half-width digits at any shared text size.
 void drawGregorianDate(const tm& now, int top)
@@ -526,6 +739,14 @@ void drawGregorianDate(const tm& now, int top)
     int x = 160 - (date_width + kGap + week_width) / 2;
     canvas.setTextSize(date_size);
     canvas.drawString(date, x, top);
+    // Offsets into "%04d-%02d-%02d".
+    if (fieldHidden(kFieldYear))
+        blankTextSpan(date, 0, 4, x, top);
+    else if (fieldHidden(kFieldMonth))
+        blankTextSpan(date, 5, 2, x, top);
+    else if (fieldHidden(kFieldDay))
+        blankTextSpan(date, 8, 2, x, top);
+
     canvas.setTextSize(kWeekSize);
     canvas.drawString(weekday, x + date_width + kGap, top + (date_height - week_height) / 2);
     canvas.setTextSize(1.0f);
@@ -543,8 +764,10 @@ void drawDate(const tm& now)
     canvas.setTextColor(TFT_CYAN, TFT_BLACK);
     canvas.setFont(&fonts::efontCN_24);
 
+    // The setup mode edits Gregorian fields and freezes the seconds, so the
+    // alternation is pinned off while it is open.
     char lunar[48];
-    if ((now.tm_sec / kSwapSecs) % 2 != 0 && formatLunarDate(now, lunar, sizeof(lunar)))
+    if (!setup_mode && (now.tm_sec / kSwapSecs) % 2 != 0 && formatLunarDate(now, lunar, sizeof(lunar)))
     {
         // All full-width glyphs here, so this stays a size below the Gregorian
         // digits to keep the two frames at a similar visual weight.
@@ -555,6 +778,72 @@ void drawDate(const tm& now)
     }
 
     drawGregorianDate(now, kTop);
+}
+
+void handleNormalButtons(uint32_t now_ms)
+{
+    if (M5.BtnA.wasPressed())
+    {
+        screen_on = !screen_on;
+        applyBrightness();
+        if (screen_on)
+            force_redraw = true;
+    }
+
+    // Button B dims, Button C brightens. Both are ignored while the backlight is
+    // off so that Button A stays the only way back from a dark screen, and while
+    // both are down, because that is the manual-setup gesture rather than a
+    // brightness change.
+    const bool both_held = M5.BtnB.isPressed() && M5.BtnC.isPressed();
+    if (screen_on && !both_held)
+    {
+        const bool dim      = buttonRepeat(M5.BtnB, btn_b_repeat_at, now_ms);
+        const bool brighten = buttonRepeat(M5.BtnC, btn_c_repeat_at, now_ms);
+        if (dim || brighten)
+        {
+            adjustBrightness(dim ? -1 : 1);
+            brightness_overlay_shown = true;
+            brightness_overlay_until = now_ms + kBrightnessOverlayMs;
+            force_redraw             = true;
+        }
+    }
+}
+
+// A steps to the next field and ends the setup after the last one; B and C step
+// the current field down and up.
+void handleSetupButtons(uint32_t now_ms)
+{
+    if (M5.BtnA.wasPressed())
+    {
+        if (++setup_field >= kFieldCount)
+        {
+            exitSetupMode(true);
+            return;
+        }
+        setup_blink_on = true;
+        setup_blink_at = now_ms + kSetupBlinkMs;
+        force_redraw   = true;
+    }
+
+    if (setup_await_release)
+    {
+        if (!M5.BtnB.isPressed() && !M5.BtnC.isPressed())
+            setup_await_release = false;
+    }
+    else
+    {
+        const bool minus = buttonRepeat(M5.BtnB, btn_b_repeat_at, now_ms);
+        const bool plus  = buttonRepeat(M5.BtnC, btn_c_repeat_at, now_ms);
+        if (minus != plus)
+            adjustSetupField(minus ? -1 : 1);
+    }
+
+    if (static_cast<int32_t>(now_ms - setup_blink_at) >= 0)
+    {
+        setup_blink_on = !setup_blink_on;
+        setup_blink_at = now_ms + kSetupBlinkMs;
+        force_redraw   = true;
+    }
 }
 
 void drawScreen(const tm& now, int animation_mode)
@@ -588,13 +877,24 @@ void drawScreen(const tm& now, int animation_mode)
 
     drawDate(now);
 
+    constexpr int kClockTop = 96;
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
     canvas.setFont(&fonts::Font7);
     canvas.setTextSize(fitTextSize(clock, 312, 1.15f));
-    canvas.drawCenterString(clock, 160, 96);
+    const int clock_left = 160 - canvas.textWidth(clock) / 2;
+    canvas.drawCenterString(clock, 160, kClockTop);
+    // Offsets into "%02d:%02d:%02d".
+    if (fieldHidden(kFieldHour))
+        blankTextSpan(clock, 0, 2, clock_left, kClockTop);
+    else if (fieldHidden(kFieldMinute))
+        blankTextSpan(clock, 3, 2, clock_left, kClockTop);
     canvas.setTextSize(1.0f);
 
-    drawEnvironment();
+    // The hints sit where the readings would, so only one of the two is up.
+    if (setup_mode)
+        drawButtonHints();
+    else
+        drawEnvironment();
 
     canvas.pushSprite(0, 0);
     last_drawn_second   = now.tm_sec;
@@ -641,6 +941,8 @@ void setup()
     last_battery_read = millis();
     Serial.printf("IP5306 power IC: %s\n", battery_present ? "detected" : "not detected");
 
+    // Registered before SNTP starts; configTzTime() does not touch the callback.
+    sntp_set_time_sync_notification_cb(onNtpSync);
     xTaskCreate(clockSyncTask, "clock_sync", 4096, nullptr, 1, nullptr);
 }
 
@@ -649,27 +951,18 @@ void loop()
     M5.update();
     const uint32_t now_ms = millis();
 
-    if (M5.BtnA.wasPressed())
-    {
-        screen_on = !screen_on;
-        applyBrightness();
-        if (screen_on)
-            force_redraw = true;
-    }
+    // NTP is authoritative: if it lands mid-edit the half-entered value is
+    // dropped, and the gesture cannot reopen the setup afterwards.
+    if (setup_mode && clockIsSynced())
+        exitSetupMode(false);
 
-    // Button B dims, Button C brightens. Both are ignored while the backlight is
-    // off so that Button A stays the only way back from a dark screen.
-    if (screen_on)
+    if (setup_mode)
     {
-        const bool dim      = buttonRepeat(M5.BtnB, dim_repeat_at, now_ms);
-        const bool brighten = buttonRepeat(M5.BtnC, brighten_repeat_at, now_ms);
-        if (dim || brighten)
-        {
-            adjustBrightness(dim ? -1 : 1);
-            brightness_overlay_shown = true;
-            brightness_overlay_until = now_ms + kBrightnessOverlayMs;
-            force_redraw             = true;
-        }
+        handleSetupButtons(now_ms);
+    }
+    else
+    {
+        handleNormalButtons(now_ms);
     }
 
     if (brightness_overlay_shown && static_cast<int32_t>(now_ms - brightness_overlay_until) >= 0)
@@ -724,13 +1017,24 @@ void loop()
     const time_t epoch = time(nullptr);
     tm           now{};
     localtime_r(&epoch, &now);
+
+    // Evaluated unconditionally so the hold timer cannot survive across a
+    // backlight toggle and fire the moment the screen comes back on.
+    const bool gesture_held = setupGestureHeld(now_ms);
+    if (!setup_mode && !clockIsSynced() && screen_on && gesture_held)
+        enterSetupMode(now);
+
+    // The setup edits a frozen copy, so the display follows that instead of the
+    // running clock while it is open.
+    const tm& shown = setup_mode ? setup_time : now;
     if (display_ok && screen_on)
     {
-        const int  animation_mode = getAnimationMode();
+        // Requirement of the setup mode: no weather animation behind the fields.
+        const int  animation_mode = setup_mode ? 0 : getAnimationMode();
         const bool animation_due  = animation_mode != 0 && now_ms - last_animation_draw >= kAnimationIntervalMs;
         const bool content_due    = force_redraw
                                     || environment_dirty
-                                    || now.tm_sec != last_drawn_second
+                                    || shown.tm_sec != last_drawn_second
                                     || animation_mode != last_animation_mode;
         if (content_due || animation_due)
         {
@@ -739,7 +1043,7 @@ void loop()
                 last_animation_draw = now_ms;
                 ++animation_frame;
             }
-            drawScreen(now, animation_mode);
+            drawScreen(shown, animation_mode);
         }
     }
 
