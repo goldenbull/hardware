@@ -14,7 +14,9 @@ idf_component_register(
         "fonts/font_sc_96.c"
     INCLUDE_DIRS "." "fonts"
     REQUIRES
-        driver
+        esp_driver_gpio
+        esp_driver_i2c
+        esp_driver_spi
         esp_lcd
         esp_wifi
         esp_netif

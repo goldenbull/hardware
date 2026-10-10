@@ -18,7 +18,7 @@ static const char *TAG = "touch";
 /* 手势判定阈值 */
 #define TAP_MAX_MOVE_PX    20     /* 位移超过这个数就不算单击 */
 #define TAP_MAX_MS         500    /* 按住超过这么久也不算单击 */
-#define DOUBLE_TAP_GAP_MS  400    /* 两次单击间隔小于它才算双击 */
+#define TOGGLE_COOLDOWN_MS 400    /* 上次开关屏之后这么久内的单击直接忽略 */
 #define SWIPE_START_PX     28     /* 竖向超过这个数才进入调亮度模式 */
 #define SWIPE_MAX_DX_PX    60     /* 横向偏太多说明不是竖滑 */
 /* 竖向划过 180px ≈ 覆盖整个亮度范围（屏幕才 240 高，不能取太大） */
@@ -66,9 +66,11 @@ bool touch_read_point(uint16_t *x, uint16_t *y)
 }
 
 /*
- * 用双击切换开关屏，而不是单击。
- * 单击的毛病是连点会让面板反复收到 0x28/0x29，跟不上就黑在那儿；双击这个动作
- * 人做起来本来就会自觉留出间隔，两次切换之间天然隔着几百毫秒，面板跟得上。
+ * 单击切换开关屏。
+ * 单击只在抬起时判定，且要求全程位移 <= TAP_MAX_MOVE_PX；而进入调亮度要求竖向
+ * 位移 >= SWIPE_START_PX，两者互斥，滑动不会误触开关屏。
+ * 连点会让面板反复收到 0x28/0x29，跟不上就黑在那儿，所以两次切换之间强制隔开
+ * TOGGLE_COOLDOWN_MS，冷却期内的单击直接丢掉（顺带让习惯性双击只切一次）。
  */
 static void touch_task(void *arg)
 {
@@ -78,7 +80,7 @@ static void touch_task(void *arg)
     uint16_t last_x = 0, last_y = 0;
     int      max_move       = 0;
     int64_t  press_time_us  = 0;
-    int64_t  last_tap_us    = 0;       /* 上一次单击的时刻，用来配双击 */
+    int64_t  last_toggle_us = 0;       /* 上一次开关屏的时刻，用来做冷却 */
     uint8_t  start_bright   = DISPLAY_BRIGHTNESS_DEFAULT;
 
     while (1) {
@@ -138,11 +140,10 @@ static void touch_task(void *arg)
                 }
             } else if (max_move <= TAP_MAX_MOVE_PX && held_ms <= TAP_MAX_MS) {
                 const int64_t now_us = esp_timer_get_time();
-                if (last_tap_us != 0 && (now_us - last_tap_us) / 1000 <= DOUBLE_TAP_GAP_MS) {
-                    last_tap_us = 0;      /* 配对用掉，三连击不会再触发一次 */
+                if (last_toggle_us == 0 || (now_us - last_toggle_us) / 1000 >= TOGGLE_COOLDOWN_MS) {
                     display_set_on(!display_is_on());
-                } else {
-                    last_tap_us = now_us;
+                    /* 取 set_on 返回之后的时刻，冷却从面板命令发完才开始算 */
+                    last_toggle_us = esp_timer_get_time();
                 }
             }
             swiping = false;
@@ -167,6 +168,6 @@ esp_err_t touch_init(const touch_callbacks_t *callbacks)
     ESP_RETURN_ON_FALSE(xTaskCreate(touch_task, "touch", 3072, NULL, 3, NULL) == pdPASS,
                         ESP_ERR_NO_MEM, TAG, "创建触摸任务失败");
 
-    ESP_LOGI(TAG, "触摸就绪：双击开关屏，上下滑动调亮度");
+    ESP_LOGI(TAG, "触摸就绪：单击开关屏，上下滑动调亮度");
     return ESP_OK;
 }

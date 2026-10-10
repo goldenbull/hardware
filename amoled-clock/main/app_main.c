@@ -87,7 +87,7 @@ void app_main(void)
     };
     /* 不带触摸的板子在这里会失败，让它继续跑，时钟照样能用 */
     if (touch_init(&touch_cb) != ESP_OK) {
-        ESP_LOGW(TAG, "触摸不可用，双击开关屏和滑动调亮度将失效");
+        ESP_LOGW(TAG, "触摸不可用，单击开关屏和滑动调亮度将失效");
     }
 
     /* IMU 不在也不影响看时间，只是不会自动翻转 */

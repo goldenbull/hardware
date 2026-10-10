@@ -48,6 +48,15 @@ idf.py build
 idf.py -p COM6 flash monitor
 ```
 
+MacOs
+
+```
+source ~/.espressif/tools/activate_idf_v6.1.sh
+cd ~/src/hardware/amoled-clock
+idf.py menuconfig
+idf.py build flash monitor
+```
+
 `idf.py build` 会自动从组件仓库拉 `esp_lcd_sh8601` 和 `lvgl/lvgl`，第一次需要联网。
 
 工程目录在 D 盘，WSL 和 Windows 看到的是同一份文件，但 **只在 Windows 侧编译**——
@@ -72,6 +81,7 @@ LVGL 配了两块 **整屏大小** 的绘制缓冲（536×240×2 = 251KB 一块�
 ## 交互细节
 
 - **单击**：手指位移不超过 20px 且按住不超过 500ms 才算单击，避免滑动时误触发。
+  两次开关屏之间至少隔 400ms，冷却期内的单击忽略，防止连点让面板跟不上。
 - **横滑**：横向位移超过 32px 且竖向偏移小于 80px 才进入调节模式。划过 400px
   覆盖整个亮度范围，可以来回拖动微调。
 - 亮度是往 SH8601 的 `0x51` 寄存器写 0~255（这块屏是 AMOLED，没有背光引脚）。
@@ -125,4 +135,4 @@ bash tools/gen_fonts.sh /path/to/other.ttf # 换字体
 - 用的是新版 I2C 驱动 `driver/i2c_master.h`。Waveshare 官方例程用的是 legacy 的
   `driver/i2c.h`，那套在 IDF 6.0 已经 EOL、7.0 会直接删掉，所以没有沿用——
   如果你从官方例程搬别的驱动过来（比如 QMI8658），也要一起改。
-- 亮度不写 NVS，重启后回到默认值 180。
+- 亮度不写 NVS，重启后回到默认值 100。

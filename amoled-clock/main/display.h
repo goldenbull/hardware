@@ -19,7 +19,7 @@
  */
 #define DISPLAY_BRIGHTNESS_MIN     60
 #define DISPLAY_BRIGHTNESS_MAX     255
-#define DISPLAY_BRIGHTNESS_DEFAULT 180
+#define DISPLAY_BRIGHTNESS_DEFAULT 100
 
 esp_err_t display_init(void);
 
