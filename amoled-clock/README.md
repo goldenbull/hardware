@@ -111,20 +111,25 @@ tools/
 Regular** 生成。这个字体是 SIL OFL 授权的，可以随固件分发；等宽的字形用在时钟上
 数字不会跳动。
 
-三份字模按用途裁剪，只包含实际会出现的字符：
+大号时钟用的是七段数码管字形 **DSEG7 Classic Bold**（同样是 SIL OFL 授权，
+授权文本见 `字模提取V2.2/DSEG-LICENSE.txt`），每个数字等宽。
+
+字模按用途裁剪，只包含实际会出现的字符：
 
 | 文件 | 大小 | 内容 |
 | --- | --- | --- |
 | `font_sc_16.c` | 16px | ASCII + 22 个汉字 + `°`，右上角状态提示用 |
 | `font_sc_28.c` | 28px | 同上，日期 / 温湿度 / 亮度用 |
-| `font_sc_48.c` | 48px | 只有 `0-9` 和 `:`，大号时钟用 |
+| `font_sc_34.c` | 34px | ASCII + 星期，日期用 |
+| `font_seg_80.c` | 80px | DSEG7，只有 `0-9` 和 `:`，大号时钟用 |
 
 **改文案时如果用到了新的汉字，必须重新生成字模**，否则新字会显示成方框。把字补进
 `tools/gen_fonts.sh` 里的 `CJK` 变量再跑：
 
 ```bash
 bash tools/gen_fonts.sh                    # 用 repo 里的更纱黑体
-bash tools/gen_fonts.sh /path/to/other.ttf # 换字体
+bash tools/gen_fonts.sh /path/to/other.ttf # 换中文字体
+bash tools/gen_fonts.sh "" /path/to/seg.ttf  # 换时钟字体（第二个参数）
 ```
 
 脚本用 `npx` 拉 `lv_font_conv`，需要 node 和联网。

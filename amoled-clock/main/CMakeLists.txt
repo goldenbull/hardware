@@ -11,7 +11,7 @@ idf_component_register(
         "fonts/font_sc_16.c"
         "fonts/font_sc_28.c"
         "fonts/font_sc_34.c"
-        "fonts/font_sc_96.c"
+        "fonts/font_seg_80.c"
     INCLUDE_DIRS "." "fonts"
     REQUIRES
         esp_driver_gpio

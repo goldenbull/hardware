@@ -4,11 +4,13 @@
 #
 # 需要 node（脚本会用 npx 拉 lv_font_conv），以及一份中文 TTF。
 # 默认用 repo 里的 更纱黑体 Fixed SC —— 等宽，SIL OFL 授权，可以随固件分发。
+# 大号时钟另用 DSEG7 Classic Bold（七段数码管字形，同样是 SIL OFL）。
 #
 # 界面上新增汉字之后，把字补进下面的 CJK 再跑一次，否则新字显示成方框。
 set -euo pipefail
 
 TTF="${1:-../../字模提取V2.2/SarasaFixedSC-Regular.ttf}"
+SEG_TTF="${2:-../../字模提取V2.2/DSEG7Classic-Bold.ttf}"
 OUT="$(cd "$(dirname "$0")/../main/fonts" && pwd)"
 
 # 界面上出现的全部汉字
@@ -28,9 +30,10 @@ npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 28 "${COMMON[@]}" \
 npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 34 "${COMMON[@]}" \
     -r 0x20-0x7E --symbols "周一二三四五六日" -o "$OUT/font_sc_34.c"
 
-# 大号时钟只有 00:00:00，不需要别的字符
-npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 96 "${COMMON[@]}" \
-    --symbols "0123456789:" -o "$OUT/font_sc_96.c"
+# 大号时钟只有 00:00:00，不需要别的字符。
+# DSEG7 每个数字等宽 65px、冒号 16px，80 号的 "00:00:00" 约 424px 宽、81px 高
+npx --yes lv_font_conv@1.5.3 --font "$SEG_TTF" --size 80 "${COMMON[@]}" \
+    --symbols "0123456789:" -o "$OUT/font_seg_80.c"
 
 echo "生成完成："
 ls -l "$OUT"

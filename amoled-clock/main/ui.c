@@ -18,8 +18,8 @@ static const char *TAG = "ui";
 /* ---- 版面 ----------------------------------------------------------
  * 536 x 240，从上到下：
  *   0   .. 44   雪花动画带（冷的时候才显示）
- *   52  .. 89   日期（字号 34）+ 温湿度（字号 28），同一行，整体居中
- *   100 .. 173  大号时钟（字号 96），独占一行
+ *   50  .. 87   日期（字号 34）+ 温湿度（字号 28），同一行，整体居中
+ *   96  .. 177  大号时钟（七段数码管字形，字号 80），独占一行
  *   184 .. 240  火焰动画带（热的时候才显示）
  * 右上角是网络状态，左侧竖条是调亮度时的指示条。
  */
@@ -28,17 +28,17 @@ static const char *TAG = "ui";
 #define FIRE_BAND_Y   (LCD_V_RES - FIRE_BAND_H)
 
 /*
- * 版面留白：雪花带底 44 → 信息行 52..89 → 时钟 100..173 → 火焰带顶 184，
- * 三处间隙 8/11/11，基本均分。
+ * 版面留白：雪花带底 44 → 信息行 50..87 → 时钟 96..177 → 火焰带顶 184，
+ * 三处间隙 6/9/7，基本均分。
  *
- * 宽度（字模实测：96 号数字每字 48px，34 号半角 17px / 汉字 34px，
- * 28 号半角 14px / 汉字 28px）：
- *   时钟   "00:00:00"                        = 384，536 宽余 76px/边
+ * 宽度（字模实测：DSEG7 80 号数字每字 65px、冒号 16px，字高 81px；
+ * 34 号半角 17px / 汉字 34px，28 号半角 14px / 汉字 28px）：
+ *   时钟   "00:00:00"                        = 424，536 宽余 56px/边
  *   信息行 "2026-08-07  周五" 272 + 20 + "-12.3°C  100%" 182 = 474，余 31px/边
  */
-#define INFO_ROW_Y   52
+#define INFO_ROW_Y   50
 #define INFO_ROW_GAP 20
-#define CLOCK_Y      100
+#define CLOCK_Y      96
 
 /* 亮度指示条：左侧竖条，垂直居中 */
 #define BRIGHT_BAR_W 10
@@ -447,7 +447,7 @@ void ui_init(void)
 
     /* 时间独占一行。字模里只有数字和冒号，占位符也只能用这些字符 */
     s_time_label = lv_label_create(scr);
-    lv_obj_set_style_text_font(s_time_label, &font_sc_96, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_time_label, &font_seg_80, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_time_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_label_set_text(s_time_label, "00:00:00");
     lv_obj_align(s_time_label, LV_ALIGN_TOP_MID, 0, CLOCK_Y);
