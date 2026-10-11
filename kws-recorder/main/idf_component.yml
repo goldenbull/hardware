@@ -3,12 +3,6 @@ version: "1.0.0"
 dependencies:
   idf: ">=5.5"
 
-  # ST7796 SPI 屏驱动
-  espressif/esp_lcd_st7796: "^1.0.0"
-
-  # 板上的 CH32V003 当 IO 扩展用：屏复位、触摸复位、功放使能、背光 PWM 都在它上面
-  waveshare/custom_io_expander_ch32v003: "^1.0.2"
-
   # ES8311 编解码芯片
   espressif/esp_codec_dev: "^1.5.0"
 

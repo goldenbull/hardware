@@ -1,5 +1,28 @@
 idf_component_register(
     SRCS
         "app_main.c"
-    INCLUDE_DIRS "."
+        "i2c_bus.c"
+        "exio.c"
+        "display.c"
+        "touch.c"
+        "sdcard.c"
+        "mic.c"
+        "recorder.c"
+        "ui.c"
+        "fonts/font_sc_16.c"
+        "fonts/font_sc_24.c"
+        "fonts/font_sc_40.c"
+    INCLUDE_DIRS "." "fonts"
+    REQUIRES
+        esp_driver_gpio
+        esp_driver_i2c
+        esp_driver_i2s
+        esp_driver_spi
+        esp_driver_sdspi
+        esp_lcd
+        esp_ringbuf
+        esp_timer
+        fatfs
+        sdmmc
+        vfs
 )

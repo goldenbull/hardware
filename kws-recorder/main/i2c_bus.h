@@ -19,9 +19,8 @@ esp_err_t i2c_bus_write(uint8_t addr, const uint8_t *buf, size_t len);
 esp_err_t i2c_bus_read(uint8_t addr, uint8_t *buf, size_t len);
 
 /*
- * 总线句柄。esp_codec_dev（ES8311）和 CH32V003 IO 扩展组件只认句柄、自己往总线上
- * 挂设备，不经过上面这几个按地址读写的函数。i2c_master 驱动本身在总线级别加了锁，
- * 两条路径并发访问是安全的。
+ * 总线句柄。esp_codec_dev（ES8311）只认句柄、自己往总线上挂设备，不经过上面这几个
+ * 按地址读写的函数。i2c_master 驱动本身在总线级别加了锁，两条路径并发访问是安全的。
  */
 i2c_master_bus_handle_t i2c_bus_get_handle(void);
 

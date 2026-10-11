@@ -11,7 +11,7 @@ static const char *TAG = "i2c_bus";
 
 #define I2C_TIMEOUT_MS 100
 
-/* 走这个模块的只有 FT6336 触摸；ES8311 和 IO 扩展由各自的组件直接挂在总线上 */
+/* 走这个模块的是 FT6336 触摸和 CH32V003 IO 扩展；ES8311 由 esp_codec_dev 直接挂在总线上 */
 #define I2C_MAX_DEVICES 4
 
 static i2c_master_bus_handle_t s_bus;
