@@ -30,3 +30,8 @@ CONFIG_LV_USE_CANVAS=y
 # 界面用的是 main/fonts/ 下自己生成的中文字模，内置字体只留 LVGL 的默认那一个
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_USE_PERF_MONITOR=n
+
+# NTP：主服务器 + 3 台备用，一台超时 lwIP 会自动换下一台。
+# 去掉开机随机延时（最长 5 秒），拿到 IP 立刻发请求。
+CONFIG_LWIP_SNTP_MAX_SERVERS=4
+CONFIG_LWIP_SNTP_STARTUP_DELAY=n

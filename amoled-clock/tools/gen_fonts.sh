@@ -9,8 +9,10 @@
 # 界面上新增汉字之后，把字补进下面的 CJK 再跑一次，否则新字显示成方框。
 set -euo pipefail
 
-TTF="${1:-../../字模提取V2.2/SarasaFixedSC-Regular.ttf}"
-SEG_TTF="${2:-../../字模提取V2.2/DSEG7Classic-Bold.ttf}"
+# 默认字体路径按脚本所在目录算，在哪个目录下运行都行
+FONT_DIR="$(cd "$(dirname "$0")/../../字模提取V2.2" && pwd)"
+TTF="${1:-$FONT_DIR/SarasaFixedSC-Regular.ttf}"
+SEG_TTF="${2:-$FONT_DIR/DSEG7Classic-Bold.ttf}"
 OUT="$(cd "$(dirname "$0")/../main/fonts" && pwd)"
 
 # 界面上出现的全部汉字
@@ -23,17 +25,18 @@ COMMON=(--bpp 4 --no-compress --format lvgl --lv-include lvgl.h)
 npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 16 "${COMMON[@]}" \
     -r 0x20-0x7E -r 0xB0 --symbols "$CJK" -o "$OUT/font_sc_16.c"
 
-npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 28 "${COMMON[@]}" \
-    -r 0x20-0x7E -r 0xB0 --symbols "$CJK" -o "$OUT/font_sc_28.c"
+# 日期和温湿度同一行，36 号。卡的是宽度："2026-10-11 周六" 270px +
+# 间隔 20 + "-12.3°C 100%" 216px = 506px，再大一号就超出 536 了。
+# 这一行只会出现星期和"传感器离线"这几个汉字
+INFO_CJK="周一二三四五六日传感器离线"
+npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 36 "${COMMON[@]}" \
+    -r 0x20-0x7E -r 0xB0 --symbols "$INFO_CJK" -o "$OUT/font_sc_36.c"
 
-# 日期行只有 "2026-08-07  周五"，汉字只用得到星期，不必带全套 CJK
-npx --yes lv_font_conv@1.5.3 --font "$TTF" --size 34 "${COMMON[@]}" \
-    -r 0x20-0x7E --symbols "周一二三四五六日" -o "$OUT/font_sc_34.c"
-
-# 大号时钟只有 00:00:00，不需要别的字符。
-# DSEG7 每个数字等宽 65px、冒号 16px，80 号的 "00:00:00" 约 424px 宽、81px 高
-npx --yes lv_font_conv@1.5.3 --font "$SEG_TTF" --size 80 "${COMMON[@]}" \
-    --symbols "0123456789:" -o "$OUT/font_seg_80.c"
+# 大号时钟只有 00:00:00，不需要别的字符。字号受宽度限制：DSEG7 自带的字距
+# 很松，ui.c 里给时钟标签设了 -6 的字间距，108 号的 "00:00:00" 着墨宽 510px，
+# 536 宽的屏左右各留 13px
+npx --yes lv_font_conv@1.5.3 --font "$SEG_TTF" --size 108 "${COMMON[@]}" \
+    --symbols "0123456789:" -o "$OUT/font_seg_108.c"
 
 echo "生成完成："
 ls -l "$OUT"

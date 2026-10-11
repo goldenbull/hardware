@@ -10,15 +10,12 @@ menu "AMOLED Clock 配置"
         string "Wi-Fi 密码"
         default "your password"
 
-    config APP_WIFI_MAX_RETRY
-        int "Wi-Fi 连接失败后的重试次数"
-        default 8
-        help
-            达到次数后停止快速重试，改为每 30 秒重连一次。
-
     config APP_NTP_SERVER
         string "NTP 服务器"
         default "ntp.aliyun.com"
+        help
+            主服务器。连不上时会依次换 ntp.tencent.com、ntp.ntsc.ac.cn、
+            cn.pool.ntp.org（备用列表在 net_time.c 里）。
 
     config APP_TIMEZONE
         string "时区（POSIX TZ 字符串）"

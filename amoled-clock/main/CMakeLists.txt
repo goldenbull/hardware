@@ -9,9 +9,8 @@ idf_component_register(
         "net_time.c"
         "ui.c"
         "fonts/font_sc_16.c"
-        "fonts/font_sc_28.c"
-        "fonts/font_sc_34.c"
-        "fonts/font_seg_80.c"
+        "fonts/font_sc_36.c"
+        "fonts/font_seg_108.c"
     INCLUDE_DIRS "." "fonts"
     REQUIRES
         esp_driver_gpio

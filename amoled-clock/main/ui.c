@@ -17,33 +17,31 @@ static const char *TAG = "ui";
 
 /* ---- 版面 ----------------------------------------------------------
  * 536 x 240，从上到下：
- *   0   .. 44   雪花动画带（冷的时候才显示）
- *   50  .. 87   日期（字号 34）+ 温湿度（字号 28），同一行，整体居中
- *   96  .. 177  大号时钟（七段数码管字形，字号 80），独占一行
- *   184 .. 240  火焰动画带（热的时候才显示）
+ *   雪花动画带（冷的时候才有，0..44）
+ *   日期 + 温湿度，同一行，整体居中
+ *   大号时钟
+ *   火焰动画带（热的时候才有，184..240）
+ * 雪花和火焰不会同时出现，按动画分三套纵坐标，见下面的 s_layouts。
  * 右上角是网络状态，左侧竖条是调亮度时的指示条。
  */
 #define SNOW_BAND_H   44
 #define FIRE_BAND_H   56
 #define FIRE_BAND_Y   (LCD_V_RES - FIRE_BAND_H)
 
-/*
- * 版面留白：雪花带底 44 → 信息行 50..87 → 时钟 96..177 → 火焰带顶 184，
- * 三处间隙 6/9/7，基本均分。
- *
- * 宽度（字模实测：DSEG7 80 号数字每字 65px、冒号 16px，字高 81px；
- * 34 号半角 17px / 汉字 34px，28 号半角 14px / 汉字 28px）：
- *   时钟   "00:00:00"                        = 424，536 宽余 56px/边
- *   信息行 "2026-08-07  周五" 272 + 20 + "-12.3°C  100%" 182 = 474，余 31px/边
- */
-#define INFO_ROW_Y   50
+/* 信息行里日期和温湿度之间的间隔 */
 #define INFO_ROW_GAP 20
-#define CLOCK_Y      96
 
-/* 亮度指示条：左侧竖条，垂直居中 */
+/*
+ * DSEG7 自带的字距很松（108 号两个数字之间空 20px），收紧 6px 后数字间
+ * 14px、数字和冒号间 8px，看上去仍是分开的笔段，但整串窄了 42px，
+ * 字号因此能从 96 提到 108。
+ */
+#define CLOCK_LETTER_SPACE (-6)
+
+/* 亮度指示条：左侧竖条，垂直居中。贴边放，避开时钟从 x≈13 开始的第一个数字 */
 #define BRIGHT_BAR_W 10
 #define BRIGHT_BAR_H 120
-#define BRIGHT_BAR_X 14   /* 距左边缘 */
+#define BRIGHT_BAR_X 2    /* 距左边缘 */
 
 /* 六角雪花画得大，片数就要少，否则 44px 高的带子里会糊成一片 */
 #define SNOW_FLAKES   7
@@ -79,6 +77,37 @@ static anim_mode_t s_anim_mode = ANIM_NONE;
 static uint32_t    s_anim_frame;
 
 static int s_last_second = -1;
+
+/*
+ * 三套版面，字号都一样，只换纵坐标。两行都受宽度限制而不是高度，
+ * 所以字号取的是 536 宽放得下的最大值，三种情况没有区别：
+ *   信息行 36 号："2026-10-11 周六" 270 + 20 + "-12.3°C 100%" 216 = 506
+ *   时钟   108 号（字间距 -6）："00:00:00" 着墨宽 510
+ *
+ * y 是标签框顶边。间隙按字形实际着墨的上下沿算（信息行着墨 0..35，
+ * 时钟 0..108），行高里带着字体自己的留白，按行高排会显得上松下紧。
+ * 信息行和时钟之间固定隔 16px，剩下的空间分到上下两头：
+ *
+ * 无动画：整屏 0..240，上下各留约 40
+ *   信息行 40..75  时钟 91..199
+ * 雪花：可用 44..240（雪花带底到屏底），上下各留约 18
+ *   信息行 62..97  时钟 113..221
+ * 火焰：可用 0..196。火焰带从 184 开始，但火苗最高 43px，尖顶到不了 196 以上。
+ *   顶上要让出右上角的网络状态（8..27），所以信息行从 30 开始
+ *   信息行 30..65  时钟 81..189
+ */
+typedef struct {
+    int16_t info_y;
+    int16_t clock_y;
+} layout_t;
+
+static const layout_t s_layouts[] = {
+    [ANIM_NONE] = {.info_y = 40, .clock_y = 91},
+    [ANIM_SNOW] = {.info_y = 62, .clock_y = 113},
+    [ANIM_FIRE] = {.info_y = 30, .clock_y = 81},
+};
+
+static lv_obj_t *s_info_row;
 
 /* 雪花状态。x 是摆动的中心线，实际横坐标由 phase 正弦调制出来 */
 static struct {
@@ -242,6 +271,12 @@ static void anim_timer_cb(lv_timer_t *timer)
     }
 }
 
+static void apply_layout(anim_mode_t mode)
+{
+    lv_obj_align(s_info_row, LV_ALIGN_TOP_MID, 0, s_layouts[mode].info_y);
+    lv_obj_align(s_time_label, LV_ALIGN_TOP_MID, 0, s_layouts[mode].clock_y);
+}
+
 static void set_anim_mode(anim_mode_t mode)
 {
     if (mode == s_anim_mode) {
@@ -249,6 +284,7 @@ static void set_anim_mode(anim_mode_t mode)
     }
     s_anim_mode = mode;
     s_anim_frame = 0;
+    apply_layout(mode);
 
     if (mode == ANIM_SNOW) {
         for (int i = 0; i < SNOW_FLAKES; i++) {
@@ -423,34 +459,35 @@ void ui_init(void)
     /* ---- 文字。画布先建，标签后建，这样标签压在动画之上 ---- */
     /*
      * 日期 + 温湿度同一行。用 flex 容器而不是写死偏移：两边的文案宽度都是变的
-     * （温湿度有 "25.3°C  60%" / "-12.3°C  100%" / "传感器离线" 几种），
+     * （温湿度有 "25.3°C 60%" / "-12.3°C 100%" / "传感器离线" 几种），
      * 容器按内容收缩后再整体居中，换文案不用重新算坐标。
      */
-    lv_obj_t *info_row = lv_obj_create(scr);
-    lv_obj_remove_style_all(info_row);                /* 去掉默认底色、边框、内边距 */
-    lv_obj_clear_flag(info_row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(info_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(info_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(info_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(info_row, INFO_ROW_GAP, LV_PART_MAIN);
-    lv_obj_align(info_row, LV_ALIGN_TOP_MID, 0, INFO_ROW_Y);
+    s_info_row = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_info_row);              /* 去掉默认底色、边框、内边距 */
+    lv_obj_clear_flag(s_info_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_info_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(s_info_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_info_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(s_info_row, INFO_ROW_GAP, LV_PART_MAIN);
 
-    s_date_label = lv_label_create(info_row);
-    lv_obj_set_style_text_font(s_date_label, &font_sc_34, LV_PART_MAIN);
+    s_date_label = lv_label_create(s_info_row);
+    lv_obj_set_style_text_font(s_date_label, &font_sc_36, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_date_label, lv_color_hex(0x59C7F0), LV_PART_MAIN);
     lv_label_set_text(s_date_label, "");
 
-    s_env_label = lv_label_create(info_row);
-    lv_obj_set_style_text_font(s_env_label, &font_sc_28, LV_PART_MAIN);
+    s_env_label = lv_label_create(s_info_row);
+    lv_obj_set_style_text_font(s_env_label, &font_sc_36, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_env_label, lv_color_hex(0xF0A030), LV_PART_MAIN);
     lv_label_set_text(s_env_label, "传感器离线");
 
-    /* 时间独占一行。字模里只有数字和冒号，占位符也只能用这些字符 */
+    /* 字模里只有数字和冒号，占位符也只能用这些字符 */
     s_time_label = lv_label_create(scr);
-    lv_obj_set_style_text_font(s_time_label, &font_seg_80, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_time_label, &font_seg_108, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(s_time_label, CLOCK_LETTER_SPACE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_time_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_label_set_text(s_time_label, "00:00:00");
-    lv_obj_align(s_time_label, LV_ALIGN_TOP_MID, 0, CLOCK_Y);
+
+    apply_layout(s_anim_mode);
 
     s_status_label = lv_label_create(scr);
     lv_obj_set_style_text_font(s_status_label, &font_sc_16, LV_PART_MAIN);
@@ -463,6 +500,7 @@ void ui_init(void)
      * 左侧一根竖条，没有面板底和文字。lv_bar 的方向由宽高比决定：高 > 宽
      * 就是竖向，填充从下往上长，和"往上滑变亮"的手势方向一致。
      * 高 120 居中落在 60..180，上不碰雪花带（0..44）、下不碰火焰带（184..）。
+     * 它会贴着时钟第一个数字的左边，只在调亮度时短暂出现，不影响阅读。
      */
     s_bright_bar = lv_bar_create(scr);
     lv_obj_set_size(s_bright_bar, BRIGHT_BAR_W, BRIGHT_BAR_H);
