@@ -1,0 +1,16 @@
+menu "SHTC3 测试配置"
+
+    config SHTC3_TEST_BACKLIGHT
+        int "背光亮度 (%)"
+        range 0 100
+        default 0
+        help
+            默认 0：屏不亮，排除背光发热。改成 80（正式固件的亮度）再跑一次，
+            对比 SHTC3 读数升高多少，就知道背光对它的影响。
+
+    config SHTC3_TEST_INTERVAL_MS
+        int "测量间隔 (ms)"
+        range 500 60000
+        default 2000
+
+endmenu
