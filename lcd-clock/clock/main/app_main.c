@@ -6,6 +6,7 @@
  *     不用（见 ../sensor-test）
  *   - 温度 > 30°C 屏幕底部烧火，< 20°C 顶部飘雪
  *   - 单击屏幕开关显示，上下滑动调亮度
+ *   - 从右往左划进调试面板（运行时间、内存、网络、传感器等），从左往右划回来
  *   - IMU 判断重力方向，屏幕倒过来放时自动翻转 180°
  *   - 比 amoled-clock 多一项：说"打开屏幕"/"关闭屏幕"开关屏（识别部分待实现，见 kws.c）
  *
@@ -19,6 +20,7 @@
  *   imu     —— 2，250ms 读一次加速度
  *   main    —— 1，起完上面几个之后盯着网络状态
  */
+#include "debug_panel.h"
 #include "display.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -44,17 +46,19 @@ static const char *TAG = "app";
 
 static void sensor_task(void *arg)
 {
-    bool present = false;
-    int  fails = 0;
+    debug_sensor_t dbg = {0};
+    int fails = 0;
 
     while (1) {
-        if (!present) {
+        if (!dbg.present) {
+            dbg.probe_count++;
             if (sht4x_probe() == ESP_OK) {
-                present = true;
+                dbg.present = true;
                 fails = 0;
             } else {
                 /* 传感器可以随时插拔，没插就慢速重试，不影响时钟 */
                 ui_set_environment(false, 0.0f, 0.0f);
+                debug_panel_report_sensor(&dbg);
                 vTaskDelay(pdMS_TO_TICKS(SENSOR_RETRY_PERIOD_MS));
                 continue;
             }
@@ -65,12 +69,19 @@ static void sensor_task(void *arg)
         const esp_err_t err = sht4x_read(&temperature, &humidity);
         if (err == ESP_OK) {
             fails = 0;
+            dbg.read_ok++;
+            dbg.temperature_c = temperature;
+            dbg.humidity_rh = humidity;
             ui_set_environment(true, temperature, humidity);
-        } else if (++fails >= SENSOR_MAX_FAILS) {
-            ESP_LOGW(TAG, "SHT45 连续 %d 次读取失败（%s），标记为掉线", fails, esp_err_to_name(err));
-            present = false;
-            ui_set_environment(false, 0.0f, 0.0f);
+        } else {
+            dbg.read_fail++;
+            if (++fails >= SENSOR_MAX_FAILS) {
+                ESP_LOGW(TAG, "SHT45 连续 %d 次读取失败（%s），标记为掉线", fails, esp_err_to_name(err));
+                dbg.present = false;
+                ui_set_environment(false, 0.0f, 0.0f);
+            }
         }
+        debug_panel_report_sensor(&dbg);
 
         vTaskDelay(pdMS_TO_TICKS(SENSOR_PERIOD_MS));
     }
@@ -99,6 +110,7 @@ void app_main(void)
     ESP_ERROR_CHECK(exio_init());               /* 放开屏和触摸的复位，必须在两者之前；功放保持关闭 */
     ESP_ERROR_CHECK(display_init_orientation(DISPLAY_LANDSCAPE));
     ui_init();
+    debug_panel_init();
 
     /* 等第一帧画完再开背光，免得先闪一下白屏 */
     vTaskDelay(pdMS_TO_TICKS(150));
@@ -107,10 +119,12 @@ void app_main(void)
     const gesture_callbacks_t gesture_cb = {
         .on_brightness_change = ui_show_brightness,
         .on_brightness_end = ui_hide_brightness,
+        .on_swipe_left = debug_panel_show,
+        .on_swipe_right = debug_panel_hide,
     };
     /* 触摸坏了时钟照样能用，只是不能点 */
     if (touch_init(false) != ESP_OK || gesture_start(&gesture_cb) != ESP_OK) {
-        ESP_LOGW(TAG, "触摸不可用，单击开关屏和滑动调亮度将失效");
+        ESP_LOGW(TAG, "触摸不可用，单击开关屏、滑动调亮度和调试面板将失效");
     }
 
 #if CONFIG_APP_IMU_AUTO_FLIP

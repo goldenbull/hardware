@@ -19,3 +19,6 @@ esp_err_t imu_init(imu_orientation_cb_t on_change);
 
 /* 读一次加速度，单位 g。调试接线方向时用得上 */
 esp_err_t imu_read_accel(float *ax, float *ay, float *az);
+
+/* imu_init() 成功过才是 true。没初始化时别调 imu_read_accel() */
+bool imu_is_ready(void);

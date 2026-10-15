@@ -32,7 +32,7 @@
 #define COLOR_BTN_CLOSE   lv_color_hex(0x7C4DDB)
 #define COLOR_BTN_STOP    lv_color_hex(0xC23B3F)
 
-static lv_obj_t *s_sd_label;
+static lv_obj_t *s_storage_label;
 static lv_obj_t *s_prompt_panel;
 static lv_obj_t *s_prompt_top;
 static lv_obj_t *s_prompt_word;
@@ -93,7 +93,7 @@ static lv_obj_t *make_button(lv_obj_t *parent, const char *title, const char *su
 /*
  * 下面几个 set_* 都是"值变了才动"。refresh_cb 每 100ms 跑一次，LVGL 8 的
  * lv_label_set_text / lv_obj_set_style_* 不管值变没变都会让对象重绘，
- * 不拦一下的话屏幕会一直在刷，白白占着和 TF 卡共用的 SPI 总线。
+ * 不拦一下的话屏幕会一直在刷，白白占着和 TF 卡共用的 SPI 总线（HTTP 模式下也白占 CPU）。
  */
 static void set_text(lv_obj_t *label, const char *fmt, ...)
 {
@@ -163,15 +163,8 @@ static void refresh_cb(lv_timer_t *t)
 
     update_meter(st.peak);
 
-    if (st.sd_mounted) {
-        set_text(s_sd_label, "TF 剩余 %lu.%lu G",
-                 (unsigned long)(st.sd_free_mb / 1024),
-                 (unsigned long)(st.sd_free_mb % 1024 * 10 / 1024));
-        set_text_color(s_sd_label, COLOR_DIM);
-    } else {
-        set_text(s_sd_label, "未检测到 TF 卡");
-        set_text_color(s_sd_label, COLOR_WARN);
-    }
+    set_text(s_storage_label, "%s", st.storage);
+    set_text_color(s_storage_label, st.storage_ok ? COLOR_DIM : COLOR_WARN);
 
     const bool busy = st.state != REC_IDLE;
     for (int i = 0; i < KEYWORD_COUNT; i++) {
@@ -207,7 +200,7 @@ static void refresh_cb(lv_timer_t *t)
         break;
     }
 
-    const uint32_t secs = st.samples / MIC_SAMPLE_RATE;
+    const uint32_t secs = st.captured_samples / MIC_SAMPLE_RATE;
     set_text(s_time_label, "%02lu:%02lu", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
     set_text_color(s_time_label, st.state == REC_RECORDING ? COLOR_REC : COLOR_TEXT);
 
@@ -222,10 +215,19 @@ static void refresh_cb(lv_timer_t *t)
         set_text_color(s_file_label, COLOR_DIM);
     }
 
-    set_text(s_quality_label, "削顶 %lu   丢帧 %lu ms",
-             (unsigned long)st.clipped_samples,
-             (unsigned long)(st.dropped_samples * 1000 / MIC_SAMPLE_RATE));
-    set_text_color(s_quality_label, (st.clipped_samples || st.dropped_samples) ? COLOR_WARN : COLOR_DIM);
+    /* 断网 / 写卡慢的时候录下来的还没落盘，积压超过 2 秒才显示，免得正常情况下一直在跳 */
+    const uint32_t backlog_s = (st.captured_samples - st.samples) / MIC_SAMPLE_RATE;
+    if (st.state != REC_IDLE && backlog_s >= 2) {
+        set_text(s_quality_label, "削顶 %lu   丢帧 %lu ms   积压 %lu 秒",
+                 (unsigned long)st.clipped_samples,
+                 (unsigned long)(st.dropped_samples * 1000 / MIC_SAMPLE_RATE),
+                 (unsigned long)backlog_s);
+    } else {
+        set_text(s_quality_label, "削顶 %lu   丢帧 %lu ms",
+                 (unsigned long)st.clipped_samples,
+                 (unsigned long)(st.dropped_samples * 1000 / MIC_SAMPLE_RATE));
+    }
+    set_text_color(s_quality_label, (st.clipped_samples || st.dropped_samples || backlog_s >= 2) ? COLOR_WARN : COLOR_DIM);
 }
 
 void ui_init(void)
@@ -241,8 +243,8 @@ void ui_init(void)
     lv_label_set_text(title, "关键词录音");
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 10);
 
-    s_sd_label = make_label(scr, &font_sc_16, COLOR_DIM);
-    lv_obj_align(s_sd_label, LV_ALIGN_TOP_RIGHT, -12, 15);
+    s_storage_label = make_label(scr, &font_sc_16, COLOR_DIM);
+    lv_obj_align(s_storage_label, LV_ALIGN_TOP_RIGHT, -12, 15);
 
     /* ---- 提示卡片 ---- */
     s_prompt_panel = lv_obj_create(scr);

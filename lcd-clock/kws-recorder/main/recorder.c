@@ -1,14 +1,7 @@
 #include "recorder.h"
 
-#include <dirent.h>
-#include <errno.h>
 #include <stdatomic.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "esp_check.h"
 #include "esp_heap_caps.h"
@@ -18,21 +11,24 @@
 #include "freertos/ringbuf.h"
 #include "freertos/task.h"
 #include "mic.h"
-#include "sdcard.h"
+#include "sink.h"
 
 static const char *TAG = "recorder";
 
-#define REC_DIR             SDCARD_MOUNT_POINT "/kws"
-#define REC_LOG             REC_DIR "/sessions.csv"
-
 /* 采集块 20ms，和 mic.c 里的 I2S DMA 帧长一致 */
 #define CAP_CHUNK_SAMPLES   (MIC_SAMPLE_RATE / 50)
-/* 16kHz * 2B = 32KB/s，512KB 能扛 16 秒的写卡停顿 */
-#define RING_BYTES          (512 * 1024)
-/* 每次最多从环形缓冲取这么多写卡，16 个扇区 */
-#define WRITE_CHUNK_BYTES   (8 * 1024)
-/* 每隔这么久回写一次 WAV 头并 fsync，中途断电最多丢这么多秒，文件头也始终是对的 */
+/* 16kHz * 2B = 32KB/s，4MB 能扛 2 分钟多的写卡停顿 / 断网 */
+#define RING_BYTES          (4 * 1024 * 1024)
+/* 攒够这么多（0.5 秒）就写一次。HTTP 下就是每个请求的大小 */
+#define WRITE_CHUNK_BYTES   (16 * 1024)
+/* 没攒够也最多隔这么久写一次，界面上的已落盘时长不至于一跳一跳的 */
+#define FLUSH_PERIOD_MS     1000
+/* 每隔这么久调一次 sink_checkpoint()：TF 卡回写 WAV 头并 fsync，中途断电最多丢这么多秒 */
 #define SYNC_PERIOD_MS      5000
+/* 写盘暂时失败（断网）时隔多久重试 */
+#define RETRY_DELAY_MS      1000
+/* 按了结束之后还传不完，最多再等这么久就放弃，已经传上去的部分照样保留 */
+#define STOP_GIVE_UP_MS     60000
 /* 停止时等采集任务把手里那一块送完再收尾，要大于一个采集块（20ms） */
 #define STOP_SETTLE_MS      60
 
@@ -60,34 +56,23 @@ static const struct {
 static RingbufHandle_t s_ring;
 static QueueHandle_t   s_cmd_queue;
 
-/* 采集任务和写卡任务之间共享的标志 / 计数，单核上原子量足够 */
+/* 采集任务和写盘任务之间共享的标志 / 计数，单核上原子量足够 */
 static atomic_bool     s_capturing;
 static atomic_uint     s_peak;
+static atomic_uint     s_captured;
 static atomic_uint     s_dropped;
 static atomic_uint     s_clipped;
 
-/* 给界面看的状态，写卡任务改、界面任务读 */
+/* 给界面看的状态，写盘任务改、界面任务读 */
 static portMUX_TYPE    s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static rec_status_t    s_status;
 
-/* 写卡用的中转缓冲放内部 RAM：环形缓冲在 PSRAM 里，直接交给 SPI DMA 会被拆成一扇区一扇区地写 */
+/*
+ * 写盘用的中转缓冲放内部 RAM：环形缓冲在 PSRAM 里，直接交给 SPI DMA 会被拆成一扇区
+ * 一扇区地写。写盘暂时失败时数据就留在这里，下次原样再交一次。
+ */
 static uint8_t s_write_buf[WRITE_CHUNK_BYTES] __attribute__((aligned(4)));
-
-typedef struct __attribute__((packed)) {
-    char     riff[4];
-    uint32_t riff_size;
-    char     wave[4];
-    char     fmt[4];
-    uint32_t fmt_size;
-    uint16_t format;
-    uint16_t channels;
-    uint32_t sample_rate;
-    uint32_t byte_rate;
-    uint16_t block_align;
-    uint16_t bits_per_sample;
-    char     data[4];
-    uint32_t data_size;
-} wav_header_t;
+static size_t  s_pending;
 
 const char *recorder_keyword_text(keyword_t keyword)
 {
@@ -108,12 +93,20 @@ static void set_error(const char *error)
     taskEXIT_CRITICAL(&s_status_lock);
 }
 
+static void set_samples(uint32_t samples)
+{
+    taskENTER_CRITICAL(&s_status_lock);
+    s_status.samples = samples;
+    taskEXIT_CRITICAL(&s_status_lock);
+}
+
 void recorder_get_status(rec_status_t *out)
 {
     taskENTER_CRITICAL(&s_status_lock);
     *out = s_status;
     taskEXIT_CRITICAL(&s_status_lock);
 
+    out->captured_samples = atomic_load(&s_captured);
     out->dropped_samples = atomic_load(&s_dropped);
     out->clipped_samples = atomic_load(&s_clipped);
     out->peak = (uint16_t)atomic_exchange(&s_peak, 0);
@@ -167,7 +160,9 @@ static void capture_task(void *arg)
         }
 
         if (atomic_load(&s_capturing)) {
-            if (xRingbufferSend(s_ring, buf, sizeof(buf), 0) != pdTRUE) {
+            if (xRingbufferSend(s_ring, buf, sizeof(buf), 0) == pdTRUE) {
+                atomic_fetch_add(&s_captured, CAP_CHUNK_SAMPLES);
+            } else {
                 atomic_fetch_add(&s_dropped, CAP_CHUNK_SAMPLES);
             }
             atomic_fetch_add(&s_clipped, clipped);
@@ -176,120 +171,26 @@ static void capture_task(void *arg)
 }
 
 /* ------------------------------------------------------------------------- */
-/* 写卡任务                                                                   */
+/* 写盘任务                                                                   */
 /* ------------------------------------------------------------------------- */
 
-static void fill_header(wav_header_t *h, uint32_t data_bytes)
+/* 从环形缓冲往中转缓冲里补数据。最多等 timeout 等第一块，之后只取现成的 */
+static void fill_pending(TickType_t timeout)
 {
-    const uint32_t block_align = MIC_CHANNELS * MIC_BITS_PER_SAMPLE / 8;
-    *h = (wav_header_t){
-        .riff = {'R', 'I', 'F', 'F'},
-        .riff_size = 36 + data_bytes,
-        .wave = {'W', 'A', 'V', 'E'},
-        .fmt = {'f', 'm', 't', ' '},
-        .fmt_size = 16,
-        .format = 1,    /* PCM */
-        .channels = MIC_CHANNELS,
-        .sample_rate = MIC_SAMPLE_RATE,
-        .byte_rate = MIC_SAMPLE_RATE * block_align,
-        .block_align = block_align,
-        .bits_per_sample = MIC_BITS_PER_SAMPLE,
-        .data = {'d', 'a', 't', 'a'},
-        .data_size = data_bytes,
-    };
-}
-
-/* 回写文件头里的长度并刷到卡上，之后文件指针回到末尾继续追加 */
-static bool sync_header(FILE *f, uint32_t data_bytes)
-{
-    wav_header_t h;
-    fill_header(&h, data_bytes);
-    if (fseek(f, 0, SEEK_SET) != 0 || fwrite(&h, sizeof(h), 1, f) != 1 || fseek(f, 0, SEEK_END) != 0) {
-        return false;
-    }
-    if (fflush(f) != 0) {
-        return false;
-    }
-    return fsync(fileno(f)) == 0;
-}
-
-/* 找 prefix_NNN.wav 里最大的 NNN，返回下一个编号 */
-static int next_index(const char *prefix)
-{
-    const size_t plen = strlen(prefix);
-    int max_idx = 0;
-
-    DIR *dir = opendir(REC_DIR);
-    if (!dir) {
-        return 1;
-    }
-    struct dirent *e;
-    while ((e = readdir(dir)) != NULL) {
-        /* FAT 不区分大小写，按不区分大小写比较，免得在 Mac 上改过名的文件被忽略 */
-        if (strncasecmp(e->d_name, prefix, plen) == 0 && e->d_name[plen] == '_') {
-            const int idx = atoi(e->d_name + plen + 1);
-            if (idx > max_idx) {
-                max_idx = idx;
-            }
-        }
-    }
-    closedir(dir);
-    return max_idx + 1;
-}
-
-static void append_log(const rec_status_t *st, uint32_t elapsed_ms)
-{
-    struct stat sb;
-    const bool exists = stat(REC_LOG, &sb) == 0;
-
-    FILE *f = fopen(REC_LOG, "a");
-    if (!f) {
-        ESP_LOGW(TAG, "打开 %s 失败：errno=%d", REC_LOG, errno);
-        return;
-    }
-    if (!exists) {
-        fprintf(f, "file,keyword,duration_s,samples,dropped_samples,clipped_samples,gain_db,sample_rate,wall_ms\n");
-    }
-    fprintf(f, "%s,%s,%.2f,%lu,%lu,%lu,%d,%d,%lu\n",
-            st->file, s_keywords[st->keyword].prefix,
-            (double)st->samples / MIC_SAMPLE_RATE,
-            (unsigned long)st->samples,
-            (unsigned long)atomic_load(&s_dropped),
-            (unsigned long)atomic_load(&s_clipped),
-            MIC_GAIN_DB, MIC_SAMPLE_RATE,
-            (unsigned long)elapsed_ms);
-    fclose(f);
-}
-
-/* 把环形缓冲里现有的数据全部写进文件。timeout 为 0 时只取已有的，不等 */
-static bool drain_ring(FILE *f, uint32_t *data_bytes, TickType_t timeout)
-{
-    while (1) {
+    while (s_pending < WRITE_CHUNK_BYTES) {
         size_t len = 0;
-        void *item = xRingbufferReceiveUpTo(s_ring, &len, timeout, WRITE_CHUNK_BYTES);
+        void *item = xRingbufferReceiveUpTo(s_ring, &len, timeout, WRITE_CHUNK_BYTES - s_pending);
         if (!item) {
-            return true;
+            return;
         }
-        memcpy(s_write_buf, item, len);
+        memcpy(s_write_buf + s_pending, item, len);
         vRingbufferReturnItem(s_ring, item);
-
-        if (fwrite(s_write_buf, 1, len, f) != len) {
-            ESP_LOGE(TAG, "写卡失败：errno=%d", errno);
-            return false;
-        }
-        *data_bytes += len;
-
-        taskENTER_CRITICAL(&s_status_lock);
-        s_status.samples = *data_bytes / sizeof(int16_t);
-        taskEXIT_CRITICAL(&s_status_lock);
-
-        if (timeout != 0) {
-            return true;   /* 正常录音时一次只取一块，回去看看有没有停止命令 */
-        }
+        s_pending += len;
+        timeout = 0;
     }
 }
 
-/* 丢掉环形缓冲里残留的数据 */
+/* 丢掉环形缓冲和中转缓冲里残留的数据 */
 static void flush_ring(void)
 {
     size_t len;
@@ -297,135 +198,183 @@ static void flush_ring(void)
     while ((item = xRingbufferReceiveUpTo(s_ring, &len, 0, RING_BYTES)) != NULL) {
         vRingbufferReturnItem(s_ring, item);
     }
+    s_pending = 0;
 }
 
-/* 建文件、写占位头。成功返回打开的 FILE*，失败返回 NULL 并设好 error */
-static FILE *open_session(keyword_t keyword)
+/* 查存储状态可能很慢（扫 FAT 表 / 等服务器回包），所以只在写盘任务里、录音间隙做 */
+static void refresh_storage(void)
 {
-    if (sdcard_mount() != ESP_OK) {
-        set_error("TF 卡挂载失败");
-        return NULL;
-    }
-    if (mkdir(REC_DIR, 0775) != 0 && errno != EEXIST) {
-        ESP_LOGE(TAG, "创建 %s 失败：errno=%d", REC_DIR, errno);
-        set_error("创建目录失败");
-        return NULL;
-    }
-
-    char name[sizeof(s_status.file)];
-    snprintf(name, sizeof(name), "%s_%03d.wav", s_keywords[keyword].prefix, next_index(s_keywords[keyword].prefix));
-
-    char path[64];
-    snprintf(path, sizeof(path), REC_DIR "/%s", name);
-
-    FILE *f = fopen(path, "wb+");
-    if (!f) {
-        ESP_LOGE(TAG, "创建 %s 失败：errno=%d", path, errno);
-        set_error("创建文件失败");
-        return NULL;
-    }
-    if (!sync_header(f, 0)) {
-        fclose(f);
-        set_error("写文件头失败");
-        return NULL;
-    }
+    char text[sizeof(s_status.storage)];
+    bool ok = false;
+    sink_refresh(text, sizeof(text), &ok);
 
     taskENTER_CRITICAL(&s_status_lock);
-    s_status.keyword = keyword;
-    strlcpy(s_status.file, name, sizeof(s_status.file));
-    s_status.samples = 0;
-    s_status.error = NULL;
+    s_status.storage_ok = ok;
+    strlcpy(s_status.storage, text, sizeof(s_status.storage));
     taskEXIT_CRITICAL(&s_status_lock);
-
-    ESP_LOGI(TAG, "开始录音：%s（%s）", path, s_keywords[keyword].text);
-    return f;
 }
 
-/* 查剩余空间可能要扫整张 FAT 表，大卡上要好几秒，所以只在写卡任务里、录音间隙做 */
-static void update_free_space(void)
+/* 停止采集，等采集任务把手里那一块送进环形缓冲 */
+static void stop_capture(void)
 {
-    const bool mounted = sdcard_is_mounted();
-    const uint32_t free_mb = mounted ? (uint32_t)(sdcard_free_bytes() >> 20) : 0;
+    set_state(REC_STOPPING);
+    atomic_store(&s_capturing, false);
+    vTaskDelay(pdMS_TO_TICKS(STOP_SETTLE_MS));
+}
 
-    taskENTER_CRITICAL(&s_status_lock);
-    s_status.sd_mounted = mounted;
-    s_status.sd_free_mb = free_mb;
-    taskEXIT_CRITICAL(&s_status_lock);
+/*
+ * 录一段：一直把环形缓冲里的数据交给 sink，直到收到停止命令、并且剩下的都写完。
+ * 返回已落盘的字节数，*complete 表示是不是全部落盘了。
+ */
+static uint32_t record_session(bool *complete)
+{
+    const TickType_t start = xTaskGetTickCount();
+    TickType_t last_flush = start;
+    TickType_t last_sync = start;
+    TickType_t stop_at = 0;
+    bool stopping = false;
+    bool retrying = false;
+    uint32_t data_bytes = 0;
+
+    *complete = false;
+    while (1) {
+        cmd_t cmd;
+        if (!stopping && xQueueReceive(s_cmd_queue, &cmd, 0) == pdTRUE && cmd.type == CMD_STOP) {
+            stop_capture();
+            stopping = true;
+            stop_at = xTaskGetTickCount();
+        }
+
+        /* 上一块还没交出去（在重试）的时候也继续往后补，补满为止 */
+        fill_pending(stopping || retrying ? 0 : pdMS_TO_TICKS(100));
+        if (stopping && s_pending == 0) {
+            *complete = true;    /* 停了，而且全写完了 */
+            break;
+        }
+
+        const TickType_t now = xTaskGetTickCount();
+        const bool due = s_pending == WRITE_CHUNK_BYTES || stopping ||
+                         now - last_flush >= pdMS_TO_TICKS(FLUSH_PERIOD_MS);
+        if (!due || s_pending == 0) {
+            continue;
+        }
+
+        const char *error = NULL;
+        const sink_result_t r = sink_write(s_write_buf, s_pending, data_bytes, &error);
+        if (r == SINK_OK) {
+            data_bytes += s_pending;
+            s_pending = 0;
+            last_flush = now;
+            set_samples(data_bytes / sizeof(int16_t));
+            if (retrying) {
+                retrying = false;
+                set_error(NULL);
+                ESP_LOGI(TAG, "恢复写入，已落盘 %lu 字节", (unsigned long)data_bytes);
+            }
+        } else if (r == SINK_FAIL) {
+            set_error(error);
+            break;
+        } else {
+            /* 断网之类：数据留在中转缓冲里，采集照常进环形缓冲，等会儿再试 */
+            if (!retrying) {
+                ESP_LOGW(TAG, "写入暂时失败：%s", error);
+            }
+            retrying = true;
+            set_error(error);
+            if (stopping && xTaskGetTickCount() - stop_at >= pdMS_TO_TICKS(STOP_GIVE_UP_MS)) {
+                set_error("传不上去，后面一段没保存");
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+            continue;
+        }
+
+        if (xTaskGetTickCount() - last_sync >= pdMS_TO_TICKS(SYNC_PERIOD_MS)) {
+            if (!sink_checkpoint(data_bytes)) {
+                set_error("写文件头失败，录音已停止");
+                break;
+            }
+            last_sync = xTaskGetTickCount();
+        }
+    }
+
+    if (!stopping) {
+        stop_capture();
+    }
+    flush_ring();
+    return data_bytes;
 }
 
 static void writer_task(void *arg)
 {
-    update_free_space();
+    refresh_storage();
 
     while (1) {
         cmd_t cmd;
-        xQueueReceive(s_cmd_queue, &cmd, portMAX_DELAY);
+        if (xQueueReceive(s_cmd_queue, &cmd, SINK_POLL_TICKS) != pdTRUE) {
+            refresh_storage();   /* HTTP 模式下定期看看服务器还在不在 */
+            continue;
+        }
         if (cmd.type != CMD_START) {
             continue;   /* 空闲时收到停止，忽略 */
         }
 
         set_state(REC_STARTING);
         set_error(NULL);
-        FILE *f = open_session(cmd.keyword);
-        update_free_space();   /* 开机没插卡、这次才挂上的话，界面要跟着更新 */
-        if (!f) {
+
+        char name[sizeof(s_status.file)];
+        const char *error = NULL;
+        const bool opened = sink_open(s_keywords[cmd.keyword].prefix, name, sizeof(name), &error);
+        refresh_storage();   /* 开机没插卡、这次才挂上的话，界面要跟着更新 */
+        if (!opened) {
+            set_error(error);
             set_state(REC_IDLE);
             continue;
         }
 
+        taskENTER_CRITICAL(&s_status_lock);
+        s_status.keyword = cmd.keyword;
+        strlcpy(s_status.file, name, sizeof(s_status.file));
+        s_status.samples = 0;
+        taskEXIT_CRITICAL(&s_status_lock);
+        ESP_LOGI(TAG, "开始录音：%s（%s）", name, s_keywords[cmd.keyword].text);
+
         flush_ring();
+        atomic_store(&s_captured, 0);
         atomic_store(&s_dropped, 0);
         atomic_store(&s_clipped, 0);
         atomic_store(&s_capturing, true);
         set_state(REC_RECORDING);
 
         const TickType_t start = xTaskGetTickCount();
-        TickType_t last_sync = start;
-        uint32_t data_bytes = 0;
-        bool ok = true;
+        bool complete = false;
+        const uint32_t data_bytes = record_session(&complete);
 
-        while (ok) {
-            if (xQueueReceive(s_cmd_queue, &cmd, 0) == pdTRUE && cmd.type == CMD_STOP) {
-                break;
-            }
-            ok = drain_ring(f, &data_bytes, pdMS_TO_TICKS(100));
-            if (ok && xTaskGetTickCount() - last_sync >= pdMS_TO_TICKS(SYNC_PERIOD_MS)) {
-                ok = sync_header(f, data_bytes);
-                last_sync = xTaskGetTickCount();
-            }
-        }
+        const sink_log_t log = {
+            .file = name,
+            .keyword = s_keywords[cmd.keyword].prefix,
+            .samples = data_bytes / sizeof(int16_t),
+            .dropped_samples = atomic_load(&s_dropped),
+            .clipped_samples = atomic_load(&s_clipped),
+            .wall_ms = pdTICKS_TO_MS(xTaskGetTickCount() - start),
+            .complete = complete,
+        };
+        sink_close(data_bytes, &log);
 
-        set_state(REC_STOPPING);
-        atomic_store(&s_capturing, false);
-        vTaskDelay(pdMS_TO_TICKS(STOP_SETTLE_MS));
-        if (ok) {
-            ok = drain_ring(f, &data_bytes, 0);
-        }
-        flush_ring();
-
-        /* 写失败（多半是卡满了）也尽量把已经写进去的部分收好尾 */
-        if (!sync_header(f, data_bytes)) {
-            ok = false;
-        }
-        fclose(f);
-        if (!ok) {
-            set_error("写卡失败，录音已停止（卡满了？）");
-        }
-
-        rec_status_t st;
-        recorder_get_status(&st);
-        append_log(&st, pdTICKS_TO_MS(xTaskGetTickCount() - start));
-
-        ESP_LOGI(TAG, "录音结束：%s，%.1f 秒，丢帧 %lu，削顶 %lu",
-                 st.file, (double)st.samples / MIC_SAMPLE_RATE,
-                 (unsigned long)st.dropped_samples, (unsigned long)st.clipped_samples);
-        update_free_space();
+        ESP_LOGI(TAG, "录音结束：%s，落盘 %.1f 秒（录了 %.1f 秒），丢帧 %lu，削顶 %lu%s",
+                 name, (double)log.samples / MIC_SAMPLE_RATE,
+                 (double)atomic_load(&s_captured) / MIC_SAMPLE_RATE,
+                 (unsigned long)log.dropped_samples, (unsigned long)log.clipped_samples,
+                 complete ? "" : "，不完整");
+        refresh_storage();
         set_state(REC_IDLE);
     }
 }
 
 esp_err_t recorder_init(void)
 {
+    ESP_RETURN_ON_ERROR(sink_init(), TAG, "存储初始化失败");
+
     s_ring = xRingbufferCreateWithCaps(RING_BYTES, RINGBUF_TYPE_BYTEBUF, MALLOC_CAP_SPIRAM);
     ESP_RETURN_ON_FALSE(s_ring, ESP_ERR_NO_MEM, TAG, "环形缓冲分配失败（PSRAM 没开？）");
 
@@ -434,7 +383,8 @@ esp_err_t recorder_init(void)
 
     ESP_RETURN_ON_FALSE(xTaskCreate(capture_task, "rec_cap", 3072, NULL, CAP_TASK_PRIO, NULL) == pdPASS,
                         ESP_ERR_NO_MEM, TAG, "创建采集任务失败");
-    ESP_RETURN_ON_FALSE(xTaskCreate(writer_task, "rec_wr", 6144, NULL, WR_TASK_PRIO, NULL) == pdPASS,
-                        ESP_ERR_NO_MEM, TAG, "创建写卡任务失败");
+    /* HTTP 客户端一路调进 lwIP，栈比只写 FATFS 时深，给足 */
+    ESP_RETURN_ON_FALSE(xTaskCreate(writer_task, "rec_wr", 8192, NULL, WR_TASK_PRIO, NULL) == pdPASS,
+                        ESP_ERR_NO_MEM, TAG, "创建写盘任务失败");
     return ESP_OK;
 }

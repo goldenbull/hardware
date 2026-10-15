@@ -1,0 +1,36 @@
+menu "录音存储"
+
+    choice REC_STORAGE
+        prompt "录音存到哪里"
+        default REC_STORAGE_HTTP
+        help
+            TF 卡：直接写到卡上的 /sdcard/kws/。
+            HTTP 上传：边录边传到电脑上跑的 tools/upload_server.py，不需要 TF 卡。
+            两种方式落下来的文件名、WAV 格式、sessions.csv 完全一样。
+
+        config REC_STORAGE_SD
+            bool "TF 卡"
+
+        config REC_STORAGE_HTTP
+            bool "HTTP 上传到电脑"
+    endchoice
+
+    config REC_WIFI_SSID
+        string "Wi-Fi SSID"
+        depends on REC_STORAGE_HTTP
+        default "your ssid"
+
+    config REC_WIFI_PASSWORD
+        string "Wi-Fi 密码"
+        depends on REC_STORAGE_HTTP
+        default "your password"
+
+    config REC_UPLOAD_URL
+        string "上传服务器地址"
+        depends on REC_STORAGE_HTTP
+        default "http://192.168.1.100:8000"
+        help
+            电脑上运行 python3 tools/upload_server.py，启动时会打印要填的地址。
+            电脑和板子必须在同一个局域网里。
+
+endmenu

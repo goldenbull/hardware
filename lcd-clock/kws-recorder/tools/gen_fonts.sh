@@ -5,7 +5,7 @@
 # 需要 node（脚本会用 npx 拉 lv_font_conv）和 python3，以及一份中文 TTF。
 # 默认用和 amoled-clock 同一份 更纱黑体 Fixed SC（SIL OFL 授权，可以随固件分发）。
 #
-# 界面用到的汉字直接从 main/ui.c、main/recorder.c 的字符串字面量里提取，
+# 界面用到的汉字直接从 main/*.c 的字符串字面量里提取（日志里的汉字也会进来，多几个字无所谓），
 # 改了界面文案之后重跑一次就行，不用手动维护字表。
 set -euo pipefail
 
@@ -15,7 +15,7 @@ TTF="${1:-$ROOT/../../字模提取V2.2/SarasaFixedSC-Regular.ttf}"
 OUT="$ROOT/main/fonts"
 
 # 只取双引号字符串里的非 ASCII 字符，注释里的汉字不进字模
-CJK="$(python3 - "$ROOT/main/ui.c" "$ROOT/main/recorder.c" <<'PY'
+CJK="$(python3 - "$ROOT"/main/*.c <<'PY'
 import re, sys
 chars = set()
 for path in sys.argv[1:]:

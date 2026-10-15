@@ -57,6 +57,7 @@ static net_state_t s_state  = NET_STATE_CONNECTING;
 static bool        s_synced = false;
 static bool        s_has_ip = false;
 static uint32_t    s_retry_delay_ms = RETRY_MIN_MS;
+static net_stats_t s_stats;
 
 /*
  * 重连和超时都用定时器而不是在事件回调里 vTaskDelay —— 事件回调跑在
@@ -69,6 +70,8 @@ static void on_time_synced(struct timeval *tv)
 {
     s_synced = true;
     s_state = NET_STATE_READY;
+    s_stats.sync_count++;
+    s_stats.last_sync = tv->tv_sec;
     esp_timer_stop(s_watchdog_timer);
 
     time_t now = tv->tv_sec;
@@ -122,6 +125,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         const wifi_event_sta_disconnected_t *event = data;
         s_has_ip = false;
         esp_timer_stop(s_watchdog_timer);
+        s_stats.disconnect_count++;
+        s_stats.last_disconnect_reason = event->reason;
 
         /* 已经校过时的话掉线不影响走时，界面直接显示离线；没校过时就一直显示连接中直到退避封顶 */
         s_state = (s_synced || s_retry_delay_ms >= RETRY_MAX_MS) ? NET_STATE_OFFLINE : NET_STATE_CONNECTING;
@@ -239,4 +244,9 @@ net_state_t net_time_get_state(void)
 bool net_time_is_synced(void)
 {
     return s_synced;
+}
+
+void net_time_get_stats(net_stats_t *out)
+{
+    *out = s_stats;
 }

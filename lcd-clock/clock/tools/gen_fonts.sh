@@ -13,8 +13,20 @@ TTF="${1:-$FONT_DIR/SarasaFixedSC-Regular.ttf}"
 SEG_TTF="${2:-$FONT_DIR/DSEG7Classic-Bold.ttf}"
 OUT="$(cd "$(dirname "$0")/../main/fonts" && pwd)"
 
-# 界面上出现的全部汉字
+# 时钟主屏上出现的汉字
 CJK="周一二三四五六日温度湿传感器离线连接中校时亮"
+
+# 调试面板的文案多、改得勤，直接从 debug_panel.c 的字符串字面量里提取非 ASCII 字符
+DEBUG_CJK="$(python3 - "$(dirname "$0")/../main/debug_panel.c" <<'PY'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+chars = set()
+for lit in re.findall(r'"((?:[^"\\\n]|\\.)*)"', src):
+    chars.update(c for c in lit if ord(c) > 0x7E and c != "\u00b0")
+print("".join(sorted(chars)), end="")
+PY
+)"
+CJK="$CJK$DEBUG_CJK"
 
 # -r 0x20-0x7E  ASCII
 # -r 0xB0       温度的 ° 号

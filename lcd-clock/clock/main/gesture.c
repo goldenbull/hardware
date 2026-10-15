@@ -23,11 +23,20 @@ static const char *TAG = "gesture";
 #define SWIPE_MAX_DX_PX    60     /* 横向偏太多说明不是竖滑 */
 /* 竖向划过 240px ≈ 覆盖整个亮度范围（横屏 320 高，取四分之三） */
 #define SWIPE_FULL_RANGE_PX 240
+/*
+ * 横滑：横向先超过 HSWIPE_START_PX、且竖向还没超过 HSWIPE_MAX_DY_PX 时锁定为横滑，
+ * 之后就不会再进入调亮度；抬起时横向位移够 HSWIPE_MIN_PX 才算数，不够就当没发生。
+ * 竖滑的入口要求 |dx| < SWIPE_MAX_DX_PX，横滑的入口要求 |dy| < HSWIPE_MAX_DY_PX，
+ * 谁先满足就是谁，锁定后另一个不再判定。
+ */
+#define HSWIPE_START_PX     40
+#define HSWIPE_MAX_DY_PX    40
+#define HSWIPE_MIN_PX       80
 
 static gesture_callbacks_t s_cb;
 
 /*
- * 单击切换开关屏。
+ * 单击切换开关屏（调试面板上也一样）。
  * 单击只在抬起时判定，且要求全程位移 <= TAP_MAX_MOVE_PX；而进入调亮度要求竖向
  * 位移 >= SWIPE_START_PX，两者互斥，滑动不会误触开关屏。
  * 两次切换之间强制隔开 TOGGLE_COOLDOWN_MS，冷却期内的单击直接丢掉
@@ -36,8 +45,10 @@ static gesture_callbacks_t s_cb;
 static void gesture_task(void *arg)
 {
     bool     pressed        = false;
-    bool     swiping        = false;
+    bool     swiping        = false;   /* 竖滑调亮度中 */
+    bool     hswiping       = false;   /* 横滑中 */
     uint16_t start_x = 0, start_y = 0;
+    int      last_dx        = 0;
     int      max_move       = 0;
     int64_t  press_time_us  = 0;
     int64_t  last_toggle_us = 0;       /* 上一次开关屏的时刻，用来做冷却 */
@@ -51,6 +62,8 @@ static void gesture_task(void *arg)
             /* 按下 */
             pressed = true;
             swiping = false;
+            hswiping = false;
+            last_dx = 0;
             start_x = x;
             start_y = y;
             max_move = 0;
@@ -64,10 +77,15 @@ static void gesture_task(void *arg)
             if (move > max_move) {
                 max_move = move;
             }
+            last_dx = dx;
 
             /* 关屏状态下不接受滑动，避免摸黑乱调 */
-            if (!swiping && display_is_on() && abs(dy) >= SWIPE_START_PX && abs(dx) < SWIPE_MAX_DX_PX) {
-                swiping = true;
+            if (!swiping && !hswiping && display_is_on()) {
+                if (abs(dy) >= SWIPE_START_PX && abs(dx) < SWIPE_MAX_DX_PX) {
+                    swiping = true;
+                } else if (abs(dx) >= HSWIPE_START_PX && abs(dy) < HSWIPE_MAX_DY_PX) {
+                    hswiping = true;
+                }
             }
 
             if (swiping) {
@@ -95,6 +113,12 @@ static void gesture_task(void *arg)
                 if (s_cb.on_brightness_end) {
                     s_cb.on_brightness_end();
                 }
+            } else if (hswiping) {
+                if (last_dx <= -HSWIPE_MIN_PX && s_cb.on_swipe_left) {
+                    s_cb.on_swipe_left();
+                } else if (last_dx >= HSWIPE_MIN_PX && s_cb.on_swipe_right) {
+                    s_cb.on_swipe_right();
+                }
             } else if (max_move <= TAP_MAX_MOVE_PX && held_ms <= TAP_MAX_MS) {
                 const int64_t now_us = esp_timer_get_time();
                 if (last_toggle_us == 0 || (now_us - last_toggle_us) / 1000 >= TOGGLE_COOLDOWN_MS) {
@@ -104,6 +128,7 @@ static void gesture_task(void *arg)
                 }
             }
             swiping = false;
+            hswiping = false;
         }
 
         vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
@@ -119,6 +144,6 @@ esp_err_t gesture_start(const gesture_callbacks_t *callbacks)
     ESP_RETURN_ON_FALSE(xTaskCreate(gesture_task, "gesture", 3072, NULL, 3, NULL) == pdPASS,
                         ESP_ERR_NO_MEM, TAG, "创建手势任务失败");
 
-    ESP_LOGI(TAG, "手势就绪：单击开关屏，上下滑动调亮度");
+    ESP_LOGI(TAG, "手势就绪：单击开关屏，上下滑动调亮度，左右滑动切换调试面板");
     return ESP_OK;
 }

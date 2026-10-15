@@ -5,3 +5,5 @@ sdkconfig
 sdkconfig.old
 
 .cache/
+kws-data/
+

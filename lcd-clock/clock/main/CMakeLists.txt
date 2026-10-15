@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "app_main.c"
+        "debug_panel.c"
         "gesture.c"
         "imu.c"
         "kws.c"
@@ -16,6 +17,8 @@ idf_component_register(
         display
         mic
         sht4x
+        esp_app_format
+        esp_driver_tsens
         esp_event
         esp_netif
         esp_timer

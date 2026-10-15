@@ -250,8 +250,8 @@ static void draw_fire(void)
 
 static void anim_timer_cb(lv_timer_t *timer)
 {
-    /* 关屏时不画，省得白白占用 CPU 和 SPI 带宽 */
-    if (!display_is_on() || s_anim_mode == ANIM_NONE) {
+    /* 关屏、或者切到了调试面板时不画，省得白白占用 CPU 和 SPI 带宽 */
+    if (!display_is_on() || s_anim_mode == ANIM_NONE || lv_obj_get_screen(s_snow_canvas) != lv_scr_act()) {
         return;
     }
 

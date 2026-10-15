@@ -43,6 +43,7 @@ static const char *TAG = "imu";
 static imu_orientation_cb_t s_on_change;
 static bool                 s_flipped;
 static uint8_t              s_addr = I2C_ADDR_QMI8658;
+static bool                 s_ready;
 
 static esp_err_t imu_write_reg(uint8_t reg, uint8_t value)
 {
@@ -149,7 +150,13 @@ esp_err_t imu_init(imu_orientation_cb_t on_change)
 
     ESP_RETURN_ON_FALSE(xTaskCreate(imu_task, "imu", 3072, NULL, 2, NULL) == pdPASS,
                         ESP_ERR_NO_MEM, TAG, "创建 IMU 任务失败");
+    s_ready = true;
 
     ESP_LOGI(TAG, "自动翻转已启用，每 %dms 采样一次", IMU_POLL_MS);
     return ESP_OK;
+}
+
+bool imu_is_ready(void)
+{
+    return s_ready;
 }

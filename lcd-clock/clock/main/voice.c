@@ -1,5 +1,7 @@
 #include "voice.h"
 
+#include <stdatomic.h>
+
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -19,7 +21,9 @@ static const char *TAG = "voice";
 #define VOICE_TASK_PRIORITY 5
 #define VOICE_TASK_STACK    (8 * 1024)
 
-static voice_cb_t s_cb;
+static voice_cb_t  s_cb;
+static bool        s_running;
+static atomic_uint s_peak;
 
 static void voice_task(void *arg)
 {
@@ -29,6 +33,18 @@ static void voice_task(void *arg)
         if (mic_read(buf, CHUNK_SAMPLES) != ESP_OK) {
             vTaskDelay(pdMS_TO_TICKS(CHUNK_MS));
             continue;
+        }
+
+        uint32_t peak = 0;
+        for (int i = 0; i < CHUNK_SAMPLES; i++) {
+            const int32_t v = buf[i];
+            const uint32_t a = (uint32_t)(v < 0 ? -v : v);
+            if (a > peak) {
+                peak = a;
+            }
+        }
+        unsigned int old = atomic_load(&s_peak);
+        while (peak > old && !atomic_compare_exchange_weak(&s_peak, &old, peak)) {
         }
 
         const kws_result_t result = kws_feed(buf, CHUNK_SAMPLES);
@@ -51,6 +67,18 @@ esp_err_t voice_start(voice_cb_t on_keyword)
     ESP_RETURN_ON_FALSE(xTaskCreate(voice_task, "voice", VOICE_TASK_STACK, NULL, VOICE_TASK_PRIORITY, NULL) == pdPASS,
                         ESP_ERR_NO_MEM, TAG, "创建语音任务失败");
 
+    s_running = true;
     ESP_LOGI(TAG, "语音开关屏已启用，增益 %ddB", MIC_GAIN_DB);
     return ESP_OK;
+}
+
+bool voice_is_running(void)
+{
+    return s_running;
+}
+
+uint16_t voice_take_peak(void)
+{
+    const unsigned int peak = atomic_exchange(&s_peak, 0);
+    return peak > 32767 ? 32767 : (uint16_t)peak;
 }

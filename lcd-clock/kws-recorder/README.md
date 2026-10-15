@@ -1,7 +1,8 @@
 # 关键词训练数据采集
 
 Waveshare **ESP32-C5-Touch-LCD-3.5** 上的录音工具：用**板载麦克风**把"打开屏幕""关闭屏幕"
-录成长 WAV 存到 TF 卡，再拿到 Mac 上切片、训练离线关键词模型。
+录成长 WAV，存到 TF 卡或者**边录边通过 Wi-Fi 上传到电脑**（没有 TF 卡时用），
+再在 Mac 上切片、训练离线关键词模型。
 
 训练数据必须用同一块板子、同一个麦克风、同一套参数来录：模型在板子上要听的就是
 这条链路的声音，用手机或电脑麦克风录的数据和它的频响、底噪、增益都不一样。
@@ -11,25 +12,58 @@ Waveshare **ESP32-C5-Touch-LCD-3.5** 上的录音工具：用**板载麦克风**
 
 | 区域 | 内容 |
 | --- | --- |
-| 顶部 | TF 卡剩余空间 |
+| 顶部 | TF 卡剩余空间；HTTP 模式下是电脑剩余空间，或者"Wi-Fi 连接中""服务器连不上" |
 | 提示卡片 | 录音中显示"请说 **打开屏幕**"，边框变红；空闲时显示"空闲" |
-| 中部 | 本次录音时长、文件名、削顶 / 丢帧计数 |
+| 中部 | 本次录音时长、文件名、削顶 / 丢帧计数。还有超过 2 秒没落盘的数据时，显示"积压 N 秒" |
 | 电平条 | 麦克风实时峰值，**空闲时也在动**，开录之前可以先试音 |
 | 按钮 | **开始录音1**（打开屏幕）、**开始录音2**（关闭屏幕）、**结束录音** |
 
 录音中两个开始按钮会变灰，只有"结束录音"能点。
 
-## 录到卡上的文件
+## 存储方式
+
+`idf.py menuconfig` → `录音存储` 里二选一，默认是 HTTP 上传：
+
+| 方式 | 文件在哪 | 需要 |
+| --- | --- | --- |
+| HTTP 上传到电脑 | 电脑上 `upload_server.py --dir` 指定的目录（默认 `./kws-data`） | 同一局域网的 Wi-Fi，在 menuconfig 填 SSID / 密码 / 服务器地址 |
+| TF 卡 | `/sdcard/kws/` | FAT32 的 TF 卡 |
+
+两种方式的文件名、WAV 格式、`sessions.csv` 完全一样，后面的切片脚本不用区分。
+
+### HTTP 上传
+
+电脑上先起服务（只用 Python 3 标准库，不用装东西）：
 
 ```
-/sdcard/kws/open_001.wav     开始录音1，每按一次编号 +1，永不覆盖
-/sdcard/kws/open_002.wav
-/sdcard/kws/close_001.wav    开始录音2
-/sdcard/kws/sessions.csv     每次录音一行
+cd ~/src/hardware/lcd-clock/kws-recorder
+python3 tools/upload_server.py                # 存到 ./kws-data，端口 8000
+python3 tools/upload_server.py --dir ~/kws    # 换个目录
+```
+
+启动时会打印 `menuconfig 里填：http://192.168.x.x:8000`，把这个地址填进 `上传服务器地址`。
+macOS 第一次运行会弹窗问是否允许 Python 接受传入连接，选允许。
+浏览器打开同一个地址能看到已录的文件，可以直接试听。
+
+- 板子每 0.5 秒传一块 16KB，带偏移量。回包丢了就原样重发，服务器按偏移量截断再写，不会重复也不会错位
+- **断网不丢数据**：录音先进 PSRAM 里 4MB 的环形缓冲（约 2 分 10 秒），Wi-Fi 断了就在那里攒着，
+  连回来再一口气补传。界面上"积压 N 秒"就是还没传上去的部分；积压超过 2 分钟才会开始丢，丢帧计数会涨
+- 按"结束录音"后会把积压的传完再收尾（界面显示"保存中"）。60 秒还传不完就放弃，已经传上去的部分照样保留，
+  服务器日志会标"上传不完整"
+- 服务器每次追加都回写 WAV 头，录到一半关掉服务器或者板子断电，已收到的部分也是能正常打开的 WAV
+- 服务器没有任何鉴权，只在自己家的局域网里用
+
+### 文件
+
+```
+open_001.wav     开始录音1，每按一次编号 +1，永不覆盖
+open_002.wav
+close_001.wav    开始录音2
+sessions.csv     每次录音一行
 ```
 
 - WAV：16kHz / 16bit / 单声道 PCM，从按下开始到按下结束是一整段连续录音
-- 每 5 秒回写一次文件头并 fsync，录到一半断电，最多丢最后 5 秒，文件仍能正常打开
+- TF 卡模式下每 5 秒回写一次文件头并 fsync，录到一半断电，最多丢最后 5 秒，文件仍能正常打开
 - `sessions.csv` 各列：`file, keyword, duration_s, samples, dropped_samples, clipped_samples, gain_db, sample_rate, wall_ms`。
   `dropped_samples` 正常应为 0；`wall_ms` 是实际经过的时间，和 `duration_s` 对得上就说明没丢数据
 
@@ -82,7 +116,9 @@ idf.py build
 idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ```
 
-TF 卡需要格式化成 **FAT32**。开机挂不上卡也能进界面，插好卡后直接点开始录音，会再试一次挂载。
+HTTP 模式下烧录前先在 menuconfig 里填好 Wi-Fi 和服务器地址，开机后顶栏显示"电脑剩余 …"就是通了。
+
+TF 卡模式：卡需要格式化成 **FAT32**。开机挂不上卡也能进界面，插好卡后直接点开始录音，会再试一次挂载。
 挂载一直失败时，检查板子背面的 **JP8 第 2 位是否拨到 ON**（官方 BSP 的提示）。
 
 ## 实现说明
@@ -92,7 +128,10 @@ TF 卡需要格式化成 **FAT32**。开机挂不上卡也能进界面，插好�
 | 模块 | 说明 |
 | --- | --- |
 | `components/mic` | I2S0 + ES8311。板上没接 MCLK，ES8311 用 BCLK 倍频；ADC 数据在左声道 |
-| `main/recorder.c` | 采集任务（优先级 6，每 20ms 一块）→ PSRAM 里 512KB 环形缓冲（16 秒）→ 写卡任务（优先级 4）。FAT 写卡偶尔卡几百毫秒，靠环形缓冲兜住 |
+| `main/recorder.c` | 采集任务（优先级 6，每 20ms 一块）→ PSRAM 里 4MB 环形缓冲（约 2 分钟）→ 写盘任务（优先级 4）。写卡偶尔卡几百毫秒、断网几十秒，都靠环形缓冲兜住 |
+| `main/sink_sd.c` / `sink_http.c` | 两种存储方式，接口在 `sink.h`，编译时按 menuconfig 只启用一个 |
+| `main/wifi.c` | HTTP 模式的 Wi-Fi，断线自动重连，关了省电模式 |
+| `tools/upload_server.py` | 电脑上的上传服务 |
 | `components/display/display.c` | ST7796，SPI 60MHz，LVGL 8 分块刷新，两块 40 行的内部 DMA 缓冲 |
 | `components/display/touch.c` | FT6336，接成 LVGL 指针设备。屏做了 X 镜像之后触摸原始坐标正好对上，不用变换 |
 | `components/sdcard` | TF 卡 SPI 模式，和屏共用 SPI2（SCK/MOSI 共用，靠 CS 区分） |
@@ -108,4 +147,4 @@ TF 卡需要格式化成 **FAT32**。开机挂不上卡也能进界面，插好�
   在 IDF 6 上找不到 `driver/i2c_master.h`。协议只是往 0x24 写寄存器，直接写在 `exio.c` 里
 
 界面字模用 `tools/gen_fonts.sh` 生成（更纱黑体，和 amoled-clock 同一份 TTF）。脚本会自动从
-`ui.c` / `recorder.c` 的字符串里提取用到的汉字，改了界面文案后重跑一次即可。
+`main/*.c` 的字符串里提取用到的汉字，改了界面文案后重跑一次即可。

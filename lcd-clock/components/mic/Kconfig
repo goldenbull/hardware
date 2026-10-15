@@ -13,6 +13,6 @@ menu "麦克风"
 
             注意：一旦开始正式采集就不要再改。识别固件必须用同一个增益，
             否则模型在板子上听到的音量和训练时不一样。每次录音的增益都记在
-            /sdcard/kws/sessions.csv 里（kws-recorder）。
+            sessions.csv 里（kws-recorder）。
 
 endmenu
