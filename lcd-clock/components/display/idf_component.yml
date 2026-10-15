@@ -1,0 +1,4 @@
+dependencies:
+  # 和 amoled-clock 保持同一个大版本，以后显示代码可以互相搬
+  lvgl/lvgl:
+    version: "^8.3.0"

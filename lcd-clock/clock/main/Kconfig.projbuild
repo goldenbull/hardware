@@ -1,0 +1,77 @@
+menu "LCD Clock 配置"
+
+    config APP_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "your ssid"
+        help
+            要连接的无线网络名称。ESP32-C5 支持 2.4GHz 和 5GHz。
+
+    config APP_WIFI_PASSWORD
+        string "Wi-Fi 密码"
+        default "your password"
+
+    config APP_NTP_SERVER
+        string "NTP 服务器"
+        default "ntp.aliyun.com"
+        help
+            主服务器。连不上时会依次换 ntp.tencent.com、ntp.ntsc.ac.cn、
+            cn.pool.ntp.org（备用列表在 net_time.c 里）。
+
+    config APP_TIMEZONE
+        string "时区（POSIX TZ 字符串）"
+        default "CST-8"
+        help
+            北京时间为 CST-8。注意 POSIX 的符号是反的，东八区写 -8。
+
+    config APP_TEMP_HOT_THRESHOLD
+        int "火焰动画触发温度（摄氏度）"
+        default 30
+
+    config APP_TEMP_COLD_THRESHOLD
+        int "雪花动画触发温度（摄氏度）"
+        default 20
+
+    config APP_SHT4X_PWR_GPIO
+        int "SHT45 供电 GPIO（-1 = 接 3V3 电源轨）"
+        range -1 28
+        default -1
+        help
+            SHT45 的 VDD 接到某个 GPIO 上时填这个 GPIO，开机时最先拉高。
+            接板上 3V3 就保持 -1。
+
+    config APP_BRIGHTNESS_DEFAULT
+        int "开机背光亮度 (%)"
+        range 5 100
+        default 60
+
+    config APP_IMU_AUTO_FLIP
+        bool "根据 IMU 自动把屏幕翻转 180°"
+        default y
+
+    choice APP_IMU_UP_AXIS
+        prompt "IMU 上哪个轴对着屏幕的上下方向"
+        depends on APP_IMU_AUTO_FLIP
+        default APP_IMU_UP_AXIS_Y
+        help
+            这块板子上是 Y 轴（amoled-clock 那块是 X 轴）。开机日志会打印三个轴的读数：把板子横着立起来，
+            读数接近 ±1g 的那个轴就是。
+
+        config APP_IMU_UP_AXIS_X
+            bool "X"
+        config APP_IMU_UP_AXIS_Y
+            bool "Y"
+    endchoice
+
+    config APP_IMU_UP_INVERT
+        bool "IMU 方向取反（屏幕立正了却显示倒的就勾上）"
+        depends on APP_IMU_AUTO_FLIP
+        default n
+
+    config APP_VOICE_ENABLE
+        bool "语音开关屏"
+        default y
+        help
+            麦克风持续采集，识别到"打开屏幕"/"关闭屏幕"时开关屏。
+            识别模型还没接上，目前只跑采集链路。
+
+endmenu

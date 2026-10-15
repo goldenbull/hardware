@@ -1,0 +1,25 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "gesture.c"
+        "imu.c"
+        "kws.c"
+        "net_time.c"
+        "ui.c"
+        "voice.c"
+        "fonts/font_sc_16.c"
+        "fonts/font_sc_40.c"
+        "fonts/font_seg_96.c"
+    INCLUDE_DIRS "." "fonts"
+    REQUIRES
+        board
+        display
+        mic
+        sht4x
+        esp_event
+        esp_netif
+        esp_timer
+        esp_wifi
+        lwip
+        nvs_flash
+)

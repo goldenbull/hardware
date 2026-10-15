@@ -1,0 +1,8 @@
+version: "1.0.0"
+
+dependencies:
+  idf: ">=5.5"
+
+  # ui.c 直接调 LVGL，版本和 components/display 一致
+  lvgl/lvgl:
+    version: "^8.3.0"
