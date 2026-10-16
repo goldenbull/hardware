@@ -68,10 +68,61 @@ menu "LCD Clock 配置"
         default n
 
     config APP_VOICE_ENABLE
-        bool "语音开关屏"
+        bool "声控开关屏"
         default y
         help
-            麦克风持续采集，识别到"打开屏幕"/"关闭屏幕"时开关屏。
-            识别模型还没接上，目前只跑采集链路。
+            麦克风持续采集，按下面选的方式开关屏。
+
+    choice APP_VOICE_MODE
+        prompt "声控方式"
+        depends on APP_VOICE_ENABLE
+        default APP_VOICE_MODE_LEVEL
+
+        config APP_VOICE_MODE_LEVEL
+            bool "音量触发：听到够响的声音就切换开 / 关"
+            help
+                卧室很安静时最省事：拍一下手、清一下嗓子就切换。
+                不区分说的是什么，所以只能"切换"，不能单独开或关。
+
+        config APP_VOICE_MODE_KWS
+            bool "关键词识别：打开屏幕 / 关闭屏幕（模型还没接上）"
+    endchoice
+
+    config APP_SOUND_TRIGGER_ENABLE
+        bool "启用音量触发开关屏"
+        depends on APP_VOICE_MODE_LEVEL
+        default n
+        help
+            不勾时麦克风照样采集、照样算音量，调试面板"声控"一行照常显示读数，
+            只是响声不会去开关屏。可以先不勾，看着调试面板把阈值调好再打开。
+
+    config APP_SOUND_THRESHOLD_DB
+        int "触发音量 (dBFS)"
+        depends on APP_VOICE_MODE_LEVEL
+        range -60 0
+        default -45
+        help
+            平滑后的音量（均方根，满幅为 0dB）升过这个值就切换一次屏幕。
+            调试面板"声控"一行显示最近 1 秒平滑音量的最大值，拿它来调：
+            想要触发的声音比这个值高、平时的动静（翻身、空调）比这个值低就对了。
+            默认 -45 是实测值：增益 30dB 时，1 米左右正常说话或拍手能稳定触发。
+            说话的均方根一般比峰值低 10dB 左右，所以比调试面板上的"峰值"要小。
+
+    config APP_SOUND_SMOOTH_MS
+        int "音量平滑时间常数 (ms)"
+        depends on APP_VOICE_MODE_LEVEL
+        range 20 1000
+        default 100
+        help
+            越大越不容易被短促的响动（碰一下桌子、一声咔哒）触发，但拍手这种
+            很短的声音也要更响才够得着阈值。
+
+    config APP_SOUND_COOLDOWN_MS
+        int "两次开关屏的最小间隔 (ms)"
+        depends on APP_VOICE_MODE_LEVEL
+        range 500 10000
+        default 2000
+        help
+            从上一次开关屏（声控或者单击都算）完成起，这么久之内的声音不理会。
 
 endmenu

@@ -42,6 +42,7 @@ static display_orientation_t s_orientation;
 static uint8_t               s_madctl;
 static bool                  s_flipped;
 static bool                  s_on = true;
+static volatile uint32_t     s_last_switch_ms;   /* 32 位读写是原子的，跨任务读不用加锁 */
 static uint8_t               s_brightness;
 
 /*
@@ -301,7 +302,14 @@ void display_set_on(bool on)
         esp_lcd_panel_io_tx_param(s_io, LCD_CMD_DISPOFF, NULL, 0);
         display_unlock();
     }
+    /* 取命令发完之后的时刻，"两次开关之间的间隔"从屏真正切完才开始算 */
+    s_last_switch_ms = (uint32_t)(esp_timer_get_time() / 1000);
     ESP_LOGI(TAG, "屏幕%s", on ? "打开" : "关闭");
+}
+
+uint32_t display_last_switch_ms(void)
+{
+    return s_last_switch_ms;
 }
 
 bool display_is_on(void)

@@ -34,6 +34,12 @@ static const char *TAG = "gesture";
 #define HSWIPE_MIN_PX       80
 
 static gesture_callbacks_t s_cb;
+static volatile uint32_t   s_last_touch_ms;   /* 32 位读写是原子的 */
+
+uint32_t gesture_last_touch_ms(void)
+{
+    return s_last_touch_ms;
+}
 
 /*
  * 单击切换开关屏（调试面板上也一样）。
@@ -57,6 +63,9 @@ static void gesture_task(void *arg)
     while (1) {
         uint16_t x, y;
         const bool now_pressed = touch_read_point(&x, &y);
+        if (now_pressed) {
+            s_last_touch_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        }
 
         if (now_pressed && !pressed) {
             /* 按下 */

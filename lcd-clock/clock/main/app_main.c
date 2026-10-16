@@ -8,12 +8,13 @@
  *   - 单击屏幕开关显示，上下滑动调亮度
  *   - 从右往左划进调试面板（运行时间、内存、网络、传感器等），从左往右划回来
  *   - IMU 判断重力方向，屏幕倒过来放时自动翻转 180°
- *   - 比 amoled-clock 多一项：说"打开屏幕"/"关闭屏幕"开关屏（识别部分待实现，见 kws.c）
+ *   - 比 amoled-clock 多一项：声控开关屏。默认是音量触发（安静的卧室里拍一下手就切换），
+ *     也可以在 menuconfig 里换成关键词识别（模型待实现，见 kws.c）
  *
  * 屏是 320x480 竖装的，这里用横屏 480x320。
  *
  * 任务划分（单核，优先级从高到低）：
- *   voice   —— 5，每 20ms 读一块麦克风数据喂给识别器
+ *   voice   —— 5，每 20ms 读一块麦克风数据，算音量 / 喂给识别器
  *   gesture —— 3，20ms 轮询 FT6336，做手势判定
  *   lvgl    —— 2，跑 lv_timer_handler，界面的所有绘制都在这个任务里
  *   sensor  —— 2，2s 读一次 SHT45
@@ -24,6 +25,7 @@
 #include "display.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "exio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -87,10 +89,36 @@ static void sensor_task(void *arg)
     }
 }
 
-/* 语音只管开或关，不是切换：屏已经是目标状态时什么都不做，误识别一次也不会把屏关掉又打开 */
-static void on_keyword(kws_result_t result)
+#if CONFIG_APP_VOICE_MODE_LEVEL
+/*
+ * 手指敲屏本身也是一声响。单击是抬起时才切屏，敲击声却在按下那一刻，冷却还没开始算，
+ * 不挡的话一次单击会被声控再切回去。手指离开屏幕这么久之内的响声都不理会。
+ */
+#define SOUND_TOUCH_GUARD_MS 1000
+#endif
+
+static void on_voice(voice_cmd_t cmd)
 {
-    const bool want_on = (result == KWS_SCREEN_ON);
+#if CONFIG_APP_VOICE_MODE_LEVEL
+    if (cmd == VOICE_SCREEN_TOGGLE) {
+        const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        const uint32_t last_switch = display_last_switch_ms();
+        const uint32_t last_touch = gesture_last_touch_ms();
+        /* 两次开关屏（声控、单击都算）之间至少隔开 CONFIG_APP_SOUND_COOLDOWN_MS */
+        if (last_switch != 0 && now_ms - last_switch < CONFIG_APP_SOUND_COOLDOWN_MS) {
+            ESP_LOGI(TAG, "响声在开关屏间隔内，忽略");
+            return;
+        }
+        if (last_touch != 0 && now_ms - last_touch < SOUND_TOUCH_GUARD_MS) {
+            ESP_LOGI(TAG, "响声紧跟着触摸，多半是敲屏声，忽略");
+            return;
+        }
+        display_set_on(!display_is_on());
+        return;
+    }
+#endif
+    /* 关键词只管开或关，不是切换：屏已经是目标状态时什么都不做，误识别一次也不会把屏关掉又打开 */
+    const bool want_on = (cmd == VOICE_SCREEN_ON);
     if (want_on != display_is_on()) {
         display_set_on(want_on);
     }
@@ -135,8 +163,8 @@ void app_main(void)
 #endif
 
 #if CONFIG_APP_VOICE_ENABLE
-    if (voice_start(on_keyword) != ESP_OK) {
-        ESP_LOGW(TAG, "麦克风不可用，语音开关屏将失效");
+    if (voice_start(on_voice) != ESP_OK) {
+        ESP_LOGW(TAG, "麦克风不可用，声控开关屏将失效");
     }
 #endif
 

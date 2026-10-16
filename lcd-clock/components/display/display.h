@@ -43,6 +43,9 @@ uint8_t display_get_brightness(void);
 void display_set_on(bool on);
 bool display_is_on(void);
 
+/* 上一次 display_set_on() 完成的时刻（esp_timer 毫秒，32 位会回绕，只用来算差值）。从没调过返回 0 */
+uint32_t display_last_switch_ms(void);
+
 /*
  * 整屏转 180°，靠改 MADCTL 实现，不走 LVGL 软件旋转。
  * touch_read_point() 的坐标会自动跟着换算。

@@ -21,3 +21,9 @@ typedef struct {
 
 /* 必须在 touch_init(false) 成功之后调用 */
 esp_err_t gesture_start(const gesture_callbacks_t *callbacks);
+
+/*
+ * 最后一次检测到手指在屏上的时刻（esp_timer 毫秒，只用来算差值），从没摸过返回 0。
+ * 声控用它避开手指敲屏的声音。
+ */
+uint32_t gesture_last_touch_ms(void);

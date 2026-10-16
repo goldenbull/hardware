@@ -259,6 +259,17 @@ static void build_peripherals(char *text)
         const uint16_t peak = voice_take_peak();
         const int db = peak ? (int)lroundf(20.0f * log10f(peak / 32767.0f)) : -96;
         add_row(text, "麦克风", "峰值%ddB 增益%d", db, MIC_GAIN_DB);
+#if CONFIG_APP_VOICE_MODE_LEVEL
+        /* 最近 1 秒平滑音量的最大值，对着 menuconfig 里的阈值调；触发次数包括被间隔挡掉的 */
+#if CONFIG_APP_SOUND_TRIGGER_ENABLE
+        add_row(text, "  声控", "%ddB/%d 触发%lu", voice_take_level_max_db(), CONFIG_APP_SOUND_THRESHOLD_DB,
+                (unsigned long)voice_trigger_count());
+#else
+        add_row(text, "  声控", "%ddB/%d 未启用", voice_take_level_max_db(), CONFIG_APP_SOUND_THRESHOLD_DB);
+#endif
+#else
+        add_row(text, "  声控", "关键词（未实现）");
+#endif
     } else {
         add_row(text, "麦克风", "未启用");
     }
